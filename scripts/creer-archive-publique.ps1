@@ -85,6 +85,12 @@ try {
         Copy-Item -LiteralPath $_.FullName -Destination $tempDir -Recurse -Force
     }
 
+    # Outils reserves au mainteneur (publication GitHub) : non diffuses
+    foreach ($f in @('scripts\publier-github.bat', 'scripts\publier-github.ps1')) {
+        $p = Join-Path $tempDir $f
+        if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force }
+    }
+
     Write-Host '[2/5] Nettoyage des donnees personnelles et historiques...' -ForegroundColor Cyan
     $dataDir = Join-Path $tempDir 'data'
     if (Test-Path -LiteralPath $dataDir) {
