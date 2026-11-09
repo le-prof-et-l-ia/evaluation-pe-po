@@ -1,7 +1,7 @@
 @echo off
-title Evaluation PE et PO - Arret du Serveur
+title Le Prof et l'IA - Arret du Serveur
 echo ===================================================
-echo     Arret de l'Evaluation PE et PO...
+echo     Arret de Le Prof et l'IA...
 echo ===================================================
 echo.
 

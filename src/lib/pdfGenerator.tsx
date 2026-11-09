@@ -367,7 +367,7 @@ function buildHtml(data: EvaluationData, level: string): string {
 
   <!-- FOOTER -->
   <div style="margin-top:30px; padding-top:12px; border-top:1px solid #e2e8f0; text-align:center; font-size:9px; color:#94a3b8; page-break-inside: avoid;">
-    Généré automatiquement par Correcteur de PE — ${new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}
+    Généré automatiquement par Le Prof et l'IA — ${new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}
   </div>
 </body>
 </html>`;

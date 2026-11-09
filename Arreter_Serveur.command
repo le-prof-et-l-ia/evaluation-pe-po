@@ -3,7 +3,7 @@ export PATH="/usr/sbin:/usr/bin:/bin:$PATH"
 cd "$(dirname "$0")"
 
 echo "==================================================="
-echo "    Arrêt de l'Evaluation PE et PO..."
+echo "    Arrêt de Le Prof et l'IA..."
 echo "==================================================="
 echo ""
 

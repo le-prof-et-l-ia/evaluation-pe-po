@@ -15,6 +15,7 @@ import SubjectGeneratorView from "@/components/po/SubjectGeneratorView";
 import * as XLSX from "xlsx";
 import { getAudioTranscriptionPrompt, sanitizeScores, sanitizeHallucinations } from "@/lib/po/promptUtils";
 import ExternalSupervisionModal from "@/components/po/ExternalSupervisionModal";
+import { obtenirEpreuve, evaluationExterneDisponible, doubleEvaluationDisponible, estDelf, AVERTISSEMENT_INTERPRETATION, type ConfigEpreuve } from "@/lib/epreuves/registre";
 import { parseExternalSupervisionResults, escapeControlCharactersInStrings, type ExternalSupervisionTask } from "@/lib/po/externalSupervision";
 import { getFriendlyModelName } from "@/lib/modelNames";
 import { formatScore } from "@/lib/scoreUtils";
@@ -26,6 +27,7 @@ import { xhrPostWithUploadProgress, detectAudioMimeType } from "@/lib/po/uploadC
 import { useCorrectionSettings } from "@/hooks/useCorrectionSettings";
 import { useToast } from "@/hooks/useToast";
 import CustomExamConfigPanel from "@/components/CustomExamConfigPanel";
+import { jsonHistorique } from "@/lib/historique";
 
 /**
  * Assemble un dossier et un nom de fichier avec le bon séparateur : « / » si le
@@ -196,7 +198,8 @@ export default function Home() {
   // Vrai si l'utilisateur a modifié le bilan affiché depuis son enregistrement automatique.
   const [resultEdited, setResultEdited] = useState(false);
   // La double évaluation suit la grille DELF : elle n'existe pas pour l'interprétation.
-  const doubleEvalAllowed = examType !== 'interpretation';
+  // Double évaluation : DELF uniquement (registre des épreuves).
+  const doubleEvalAllowed = doubleEvaluationDisponible('po', examType);
   const doubleEvalActive = useDoubleEval && doubleEvalAllowed;
 
   // Restauration du dernier lot en cours (les réglages, eux, sont gérés
@@ -456,7 +459,7 @@ export default function Home() {
       const res = await fetch("/api/history", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+        body: jsonHistorique('po', payload)
       });
 
       if (res.ok) {
@@ -565,7 +568,7 @@ export default function Home() {
         const enriched = { ...evaluationResultData, id: savedId || evaluationResultData.id };
         setEvaluationResult(enriched);
         setIsLoading(false);
-        if (externalEvalSupported) {
+        if (doubleEvalAllowed) {
           openExternalSupervision('single', [{
             fileId: enriched.file || 'single',
             subject: enriched.subject || subject || 'Sujet',
@@ -710,16 +713,34 @@ export default function Home() {
     }
   };
 
-  // L'évaluation par IA externe (consignes, double évaluation, automatisation de bureau)
-  // ne connaît que la grille DELF : on la bloque pour les autres épreuves plutôt que
-  // de produire une évaluation DELF d'une dictée, d'une traduction ou d'une interprétation.
-  const externalEvalSupported = examType !== 'interpretation';
-  const EXTERNAL_UNSUPPORTED_MSG = "L'évaluation par une IA externe (sans clé API) ne prend en charge pour l'instant que le DELF B1 et B2 : ses consignes suivent la grille du DELF.\n\nPour l'interprétation, utilisez la correction avec une clé Gemini (« Analyser » ou « Lancer le lot complet »).";
+  // L'évaluation par IA externe (copier-coller et dossier d'échange) est ouverte à toute
+  // épreuve inscrite au registre avec une version externe (DELF B1/B2, interprétation).
+  // La double évaluation reste réservée au DELF.
+  const externalEvalSupported = evaluationExterneDisponible('po', examType);
+  const DOUBLE_EVAL_DELF_ONLY_MSG = "La double évaluation est disponible pour le DELF B1 et B2 uniquement : sa grille de contrôle est celle du DELF. Pour l'interprétation, la première évaluation est conservée.";
+
+  /** Configuration de l'interprétation pour l'évaluation par IA externe (registre des épreuves). */
+  const buildExamConfig = (): ConfigEpreuve => ({
+    maxScore: customMaxScore,
+    referenceText: interpretationSourceSpeech,
+    interpretationMode,
+    customInstructions,
+  });
+  const EXTERNAL_UNSUPPORTED_MSG = "L'évaluation par une IA externe (sans clé API) n'est pas disponible pour cette épreuve.\n\nUtilisez la correction avec une clé Gemini (« Analyser » ou « Lancer le lot complet »).";
 
   // ── Double évaluation externe (Claude, sans clé API) ──────────────────────
   const openExternalInitial = (context: 'single' | 'batch', tasks: any[]) => {
     if (!externalEvalSupported) { alert(EXTERNAL_UNSUPPORTED_MSG); return; }
     if (tasks.length === 0) { alert("Aucune copie à soumettre à l'évaluation externe."); return; }
+    if (!estDelf(examType)) {
+      const manque = obtenirEpreuve('po', examType)?.verifierConfig({ config: buildExamConfig() });
+      if (manque) { alert(manque); return; }
+      const sansTexte = tasks.filter((t: any) => !(t.transcription || '').trim()).length;
+      if (sansTexte > 0) {
+        alert(`${sansTexte} prestation(s) sans transcription : l'IA externe ne peut pas écouter l'enregistrement. Collez ou corrigez la transcription à la main, ou faites-la produire par le dossier d'échange (« Préparer OCR externe »).`);
+        return;
+      }
+    }
     setExternalMode('initial');
     setExternalContext(context);
     setExternalTasks(tasks);
@@ -727,7 +748,7 @@ export default function Home() {
   };
 
   const openExternalSupervision = (context: 'single' | 'batch', tasks: ExternalSupervisionTask[]) => {
-    if (!externalEvalSupported) { alert(EXTERNAL_UNSUPPORTED_MSG + "\n\nLa première évaluation est conservée."); return; }
+    if (!doubleEvalAllowed) { alert(DOUBLE_EVAL_DELF_ONLY_MSG); return; }
     if (tasks.length === 0) { alert("Aucune copie à superviser en externe."); return; }
     setExternalMode('supervision');
     setExternalContext(context);
@@ -737,11 +758,25 @@ export default function Home() {
 
   const handlePrepareExternalBatch = async (taskType: 'ocr' | 'eval' | 'supervision', itemsOverride?: any[]) => {
     if (taskType !== 'ocr' && !externalEvalSupported) { alert(EXTERNAL_UNSUPPORTED_MSG); return; }
+    if (taskType === 'supervision' && !doubleEvalAllowed) { alert(DOUBLE_EVAL_DELF_ONLY_MSG); return; }
+    if (taskType === 'eval' && !estDelf(examType)) {
+      const manque = obtenirEpreuve('po', examType)?.verifierConfig({ config: buildExamConfig() });
+      if (manque) { alert(manque); return; }
+    }
     try {
       setIsExternalBatchLoading(true);
       let itemsToPrepare: any[] = [];
+      const transcrites = pendingReviews.filter(r => r.status === 'success' && (r.transcription || '').trim());
       if (itemsOverride && itemsOverride.length > 0) {
         itemsToPrepare = itemsOverride;
+      } else if (taskType === 'eval' && transcrites.length > 0) {
+        // Copies déjà transcrites (OCR interne ou importé) : on transmet leur texte.
+        itemsToPrepare = transcrites.map(r => ({
+          file: r.file,
+          filePath: joinPath(batchFolder, r.file),
+          subject: r.subject || batchSubject || subject || 'Sujet',
+          transcription: r.transcription,
+        }));
       } else if (taskType === 'ocr' || taskType === 'eval') {
         const resList = await fetch(`/api/po/batch?folder=${encodeURIComponent(batchFolder)}`);
         if (!resList.ok) throw new Error("Impossible de lister les fichiers du dossier source.");
@@ -782,6 +817,8 @@ export default function Home() {
           taskType,
           exchangeFolder: outputFolder ? joinPath(outputFolder, "_ECHANGE_IA") : undefined,
           items: itemsToPrepare,
+          examType,
+          examConfig: estDelf(examType) ? undefined : buildExamConfig(),
           config: {
             level,
             language,
@@ -837,6 +874,8 @@ export default function Home() {
           taskType,
           exchangeFolder: outputFolder ? joinPath(outputFolder, "_ECHANGE_IA") : undefined,
           items: itemsToExpect,
+          examType,
+          examConfig: estDelf(examType) ? undefined : buildExamConfig(),
           config: {
             level,
             language,
@@ -958,7 +997,7 @@ export default function Home() {
           fetch("/api/history", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ records: itemsToSave })
+            body: jsonHistorique('po', { records: itemsToSave })
           }).catch(err => console.error("Batch supervision history sync error:", err));
         }
       }
@@ -1059,7 +1098,7 @@ export default function Home() {
       const historyRes = await fetch("/api/history", {
          method: "POST",
          headers: { "Content-Type": "application/json" },
-         body: JSON.stringify({
+         body: jsonHistorique('po', {
            ...finalData,
            subject: finalData.subject || subject || (finalData as any)._comparison?.firstEval?.subject || (finalData as any)._comparison?.secondEval?.subject || '',
            level
@@ -1648,7 +1687,7 @@ ${transcriptionPart2}
                     fetch("/api/history", {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ records: itemsToSave })
+                      body: jsonHistorique('po', { records: itemsToSave })
                     }).catch(err => console.error("Batch done history sync error:", err));
                   }
                 }
@@ -1896,7 +1935,7 @@ ${transcriptionPart2}
             await fetch("/api/history", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ 
+                body: jsonHistorique('po', { 
                   ...item, 
                   subject: item.subject || batchSubject || subject || (item as any)._comparison?.firstEval?.subject || (item as any)._comparison?.secondEval?.subject || '',
                   level 
@@ -2572,7 +2611,7 @@ ${transcriptionPart2}
       await fetch("/api/history", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ 
+          body: jsonHistorique('po', { 
             ...item, 
             subject: item.subject || batchSubject || subject || (item as any)._comparison?.firstEval?.subject || (item as any)._comparison?.secondEval?.subject || '',
             level 
@@ -2723,7 +2762,7 @@ ${transcriptionPart2}
       <motion.aside initial={{ x: -50, opacity: 0 }} animate={{ x: 0, opacity: 1 }} className="print:hidden w-80 flex-shrink-0 glass-card flex flex-col p-6 overflow-hidden">
         <div className="flex items-center gap-3 mb-8 px-2">
           <div className="bg-blue-600 p-2.5 rounded-2xl"><CheckCircle className="w-6 h-6 text-white" /></div>
-          <div><h1 className="font-bold text-lg leading-tight">Correcteur de PO</h1><p className="text-xs text-slate-500 font-medium">Assistant AI Officiel</p></div>
+          <div><h1 className="font-bold text-lg leading-tight">{"Le Prof et l'IA"}</h1><p className="text-xs text-slate-500 font-medium">Assistant AI Officiel</p></div>
         </div>
 
         <div className="flex flex-col gap-1 mb-8">
@@ -3141,10 +3180,11 @@ ${transcriptionPart2}
                   <button
                     onClick={() => {
                       if (!externalEvalSupported) return alert(EXTERNAL_UNSUPPORTED_MSG);
-                      if (!subject || !text) return alert("Veuillez remplir le sujet et la transcription.");
+                      if (estDelf(examType) && (!subject || !text)) return alert("Veuillez remplir le sujet et la transcription.");
+                      if (!estDelf(examType) && !text.trim()) return alert(`Collez ou corrigez la transcription de la prestation dans la zone de texte : l'IA externe ne peut pas écouter l'enregistrement.\n\n${AVERTISSEMENT_INTERPRETATION}`);
                       openExternalInitial('single', [{
                         fileId: 'single',
-                        subject,
+                        subject: estDelf(examType) ? subject : 'Interprétation',
                         transcription: text,
                         result1: { transcription: text } as any
                       }]);
@@ -3569,7 +3609,7 @@ ${transcriptionPart2}
                 onSendFeedback={handleSendFeedback} 
                 onDataChange={(updated) => { setEvaluationResult(updated); setResultEdited(true); }} 
                 outputFolder={outputFolder}
-                onSupervise={(forcedMode) => {
+                onSupervise={!doubleEvalAllowed ? undefined : (forcedMode) => {
                   const targetMode = forcedMode || supervisionMode;
                   if (targetMode === 'internal') {
                     if (evaluationResult) {
@@ -4552,6 +4592,8 @@ ${transcriptionPart2}
             mode={externalMode}
             tasks={externalTasks}
             config={{ level, language, notationType }}
+            examType={examType}
+            examConfig={estDelf(examType) ? undefined : buildExamConfig()}
             firstProviderLabel={getFriendlyModelName(evalModel)}
             outputFolder={outputFolder}
             onApply={handleApplyExternalSupervision}

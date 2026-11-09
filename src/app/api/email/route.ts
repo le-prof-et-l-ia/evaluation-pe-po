@@ -34,7 +34,7 @@ export async function POST(req: Request) {
     });
 
     const mailOptions = {
-      from: `"Évaluation DELF" <${emailUser}>`,
+      from: `"Le Prof et l'IA" <${emailUser}>`,
       to: to,
       subject: subject || `Votre bilan de production écrite DELF ${delfLevel}`,
       text: body || "Bonjour,\n\nVoici la correction de votre production.\n\nBien cordialement,\n\nL'équipe pédagogique",

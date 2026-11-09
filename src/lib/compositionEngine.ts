@@ -406,32 +406,3 @@ ${studentText.trim()}
 ${customBlock}
 Procède à l'évaluation méthodique de cette copie selon les consignes et renvoie le rapport au format JSON strict.`;
 }
-
-/**
- * Génère le markdown pour la double évaluation externe d'une composition.
- */
-export function buildCompositionExternalMarkdown(
-  studentText: string,
-  subject: string,
-  compositionType: CompositionSubType = 'essai',
-  maxScore: number = 20,
-  corpusText?: string,
-  targetLanguage: string = 'Français',
-  customInstructions?: string,
-  criteria?: CustomCriterion[],
-  disableStandardGrid: boolean = false
-): string {
-  const label = getCompositionTypeLabel(compositionType);
-  return `# Consignes pour la double évaluation externe — ${label}
-
-Copiez et collez l'intégralité du contenu ci-dessous dans une IA externe (Claude, ChatGPT, etc.) :
-
-\`\`\`markdown
-${buildCompositionSystemPrompt(compositionType, maxScore, targetLanguage, criteria, disableStandardGrid, customInstructions)}
-
-${buildCompositionUserPrompt(studentText, subject, corpusText, customInstructions, targetLanguage, disableStandardGrid)}
-
-Renvoie UNIQUEMENT le bloc JSON valide conforme aux instructions.
-\`\`\`
-`;
-}

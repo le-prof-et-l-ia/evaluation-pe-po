@@ -119,24 +119,3 @@ export function computeGrammarGlobalScore(items: GrammarItemEvaluation[], target
   }
   return Math.round(rawSum * 100) / 100;
 }
-
-export function buildGrammarExternalMarkdown(
-  studentAnswers: string,
-  exerciseSubject: string,
-  maxScore: number,
-  answerKey?: string,
-  customInstructions?: string
-): string {
-  return `# Consignes pour la double évaluation externe d'un exercice de grammaire
-
-Copiez et collez l'intégralité du contenu ci-dessous dans une IA externe (Claude, ChatGPT, etc.) :
-
-\`\`\`markdown
-${buildGrammarSystemPrompt(maxScore)}
-
-${buildGrammarUserPrompt(studentAnswers, exerciseSubject, answerKey, customInstructions)}
-
-Renvoie UNIQUEMENT le bloc JSON valide conforme aux instructions.
-\`\`\`
-`;
-}

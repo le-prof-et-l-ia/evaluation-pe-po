@@ -58,7 +58,7 @@ export default function HeaderNav({
               <span className="text-xl">🎓</span>
               <div>
                 <h1 className="font-bold text-slate-800 text-sm sm:text-base leading-tight">
-                  Évaluation DELF
+                  {"Le Prof et l'IA"}
                 </h1>
                 <p className="text-[10px] text-slate-500 hidden sm:block">
                   Correction automatisée & supervisée

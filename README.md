@@ -1,4 +1,4 @@
-# Évaluation PE et PO (Public)
+# Le Prof et l'IA
 
 Application locale de **correction et de création d'épreuves assistée par IA**, pour les enseignants de français et de FLE.
 

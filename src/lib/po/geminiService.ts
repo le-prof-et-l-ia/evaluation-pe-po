@@ -4,6 +4,7 @@ import { finalizeArbiter } from './externalSupervision';
 import { getFriendlyModelName } from '../modelNames';
 import { buildInterpretationSystemPrompt, buildInterpretationUserPrompt, DEFAULT_INTERPRETATION_CRITERIA } from './interpretationEngine';
 import type { CustomCriterion } from '../customExamTypes';
+import { finaliserInterpretation, criteresInterpretation, type ParamsInterpretation } from '../epreuves/finalisation';
 
 import { withRetryAndFallback as sharedRetry, type KeyConfig, isKeyError, executeWithTimeout, getOrderedFreeKeys } from '../retryUtils';
 
@@ -851,7 +852,8 @@ export async function evaluateInterpretation(
   onKeySelected?: (info: { key: string, isCustom: boolean }) => void
 ) {
   const targetModel = resolveGeminiModel(evalModel);
-  const systemInstruction = buildInterpretationSystemPrompt(maxScore, mode, sourceLang, targetLang, criteria);
+  const params: ParamsInterpretation = { sourceSpeech, maxScore, mode, sourceLang, targetLang, criteria, customInstructions };
+  const systemInstruction = buildInterpretationSystemPrompt(maxScore, mode, sourceLang, targetLang, criteresInterpretation(params));
   const userPrompt = buildInterpretationUserPrompt(studentTranscription, sourceSpeech, customInstructions);
 
   const rawJson = await runWithGeminiModelFallback(targetModel, async (activeModel, apiKey) => {
@@ -869,32 +871,7 @@ export async function evaluateInterpretation(
     return safeParseJson<any>(response.text || "{}");
   }, apiKeys, onKeySelected);
 
-  const criteriaScores = rawJson.criteriaScores || {};
-  let sumCrit = 0;
-  for (const c of criteria) {
-    if (criteriaScores[c.key] !== undefined) {
-      sumCrit += Number(criteriaScores[c.key]) || 0;
-    }
-  }
-  const globalScore = rawJson.globalScore !== undefined ? Number(rawJson.globalScore) : sumCrit;
-
-  return {
-    examType: 'interpretation' as const,
-    globalScore: Math.round(globalScore * 100) / 100,
-    maxScore,
-    criteriaScores,
-    justifications: rawJson.justifications || {},
-    advices: rawJson.advices || {},
-    errorsTable: Array.isArray(rawJson.errorsTable) ? rawJson.errorsTable : [],
-    detailedErrors: Array.isArray(rawJson.detailedErrors) ? rawJson.detailedErrors : [],
-    transcription: studentTranscription,
-    sourceSpeech,
-    mode,
-    sourceLanguage: sourceLang,
-    targetLanguage: targetLang,
-    studentName: null as string | null,
-    studentEmail: null as string | null
-  };
+  return finaliserInterpretation(rawJson, studentTranscription, params);
 }
 
 

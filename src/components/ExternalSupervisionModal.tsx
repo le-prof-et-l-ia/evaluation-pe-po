@@ -9,12 +9,11 @@ import {
   buildExternalSupervisionMarkdown,
   parseExternalSupervisionResults,
   finalizeExternalSupervision,
-  buildExternalInitialMarkdown,
-  finalizeExternalInitial,
   type ExternalSupervisionTask,
   type ExternalInitialTask,
   type ExternalSupervisionConfig,
 } from "@/lib/externalSupervision";
+import { obtenirEpreuve, estDelf, type ConfigEpreuve, type ContexteEpreuve } from "@/lib/epreuves/registre";
 
 interface Props {
   /** 'initial' = 1re évaluation externe ; 'supervision' = 2e (double évaluation). */
@@ -25,12 +24,21 @@ interface Props {
   firstProviderLabel?: string;
   /** Dossier de sortie de l'appli. */
   outputFolder?: string;
+  /** Type d'épreuve ('delf_b1', 'dictee', 'traduction'…) : choisit consignes et calcul de la note (registre des épreuves). */
+  examType?: string;
+  /** Configuration d'une épreuve hors DELF (texte de référence, corrigé, barème…). */
+  examConfig?: ConfigEpreuve;
   onApply: (results: { fileId: string; finalResult: CorrectionResult }[]) => void;
   onClose: () => void;
 }
 
-export default function ExternalSupervisionModal({ mode = 'supervision', tasks, config, firstProviderLabel, outputFolder, onApply, onClose }: Props) {
+export default function ExternalSupervisionModal({ mode = 'supervision', tasks, config, firstProviderLabel, outputFolder, examType, examConfig, onApply, onClose }: Props) {
   const isInitial = mode === 'initial';
+  // Évaluation initiale : consignes et finalisation propres à l'épreuve (registre).
+  // La double évaluation reste réservée au DELF.
+  const epreuve = obtenirEpreuve('pe', isInitial ? examType : 'delf');
+  const contexte: ContexteEpreuve = estDelf(examType) ? { delfPE: config } : { config: examConfig };
+  const tailleConseillee = isInitial && epreuve ? epreuve.tailleSousLot : 5;
   const [copied, setCopied] = useState(false);
   const [importText, setImportText] = useState("");
   const [error, setError] = useState("");
@@ -39,7 +47,7 @@ export default function ExternalSupervisionModal({ mode = 'supervision', tasks, 
 
   // Découpage en sous-lots (chunking)
   const totalItems = tasks.length;
-  const [chunkSize, setChunkSize] = useState(totalItems > 1 ? 5 : 1);
+  const [chunkSize, setChunkSize] = useState(totalItems > 1 ? Math.min(tailleConseillee, totalItems) : 1);
   const [activeChunkIndex, setActiveChunkIndex] = useState(0);
   const [processedFileIds, setProcessedFileIds] = useState<Set<string>>(new Set());
 
@@ -58,10 +66,12 @@ export default function ExternalSupervisionModal({ mode = 'supervision', tasks, 
   const markdown = useMemo(() => {
     if (activeChunk.length === 0) return "";
     if (isInitial) {
-      return buildExternalInitialMarkdown(activeChunk as ExternalInitialTask[], config);
+      if (!epreuve) return "";
+      return epreuve.genererConsignes(activeChunk as ExternalInitialTask[], contexte);
     }
     return buildExternalSupervisionMarkdown(activeChunk as ExternalSupervisionTask[], config);
-  }, [isInitial, activeChunk, config]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isInitial, activeChunk, config, epreuve, JSON.stringify(examConfig ?? null)]);
 
   const handleDownload = () => {
     const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
@@ -123,7 +133,8 @@ export default function ExternalSupervisionModal({ mode = 'supervision', tasks, 
         let finalResult: CorrectionResult;
         if (isInitial) {
           const task = (activeChunk as ExternalSupervisionTask[]).find(t => t.fileId === id)!;
-          finalResult = finalizeExternalInitial(match.evaluation, config.gradingMode, task.transcription);
+          if (!epreuve) throw new Error("Épreuve inconnue.");
+          finalResult = epreuve.finaliser(match.evaluation, task, contexte);
         } else {
           const st = (activeChunk as ExternalSupervisionTask[]).find(t => t.fileId === id)!;
           finalResult = finalizeExternalSupervision(st.result1, match.evaluation, config.gradingMode, "IA externe", firstProviderLabel);
@@ -182,7 +193,7 @@ export default function ExternalSupervisionModal({ mode = 'supervision', tasks, 
         <div className="flex items-center justify-between p-6 border-b border-slate-100">
           <h3 className="text-xl font-black text-slate-800 flex items-center gap-3">
             <Brain className="w-6 h-6 text-violet-600" />
-            {isInitial ? 'Évaluation initiale externe (Examinateur 1)' : 'Double évaluation externe (IA externe)'}
+            {isInitial ? `Évaluation initiale externe${epreuve && epreuve.id !== 'delf' ? ` — ${epreuve.libelle}` : ' (Examinateur 1)'}` : 'Double évaluation externe (IA externe)'}
           </h3>
           <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded-lg"><X className="w-5 h-5 text-slate-400" /></button>
         </div>
@@ -194,6 +205,17 @@ export default function ExternalSupervisionModal({ mode = 'supervision', tasks, 
               : `${totalItems} copie(s) à superviser. L'IA externe reçoit la 1re évaluation, l'audite, la rectifie et produit l'évaluation finale d'autorité. La comparaison entre les deux évaluateurs reste consultable dans l'application.`}
           </p>
 
+          {isInitial && epreuve?.avertissement && (
+            <div className="flex items-start gap-2 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-xl p-3">
+              <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" /> <span>{epreuve.avertissement}</span>
+            </div>
+          )}
+          {isInitial && epreuve && epreuve.id !== 'delf' && (
+            <p className="text-xs text-slate-500">
+              La note est recalculée par l&apos;application à partir de la réponse de l&apos;IA (barème de l&apos;épreuve), comme pour une correction avec clé Gemini.
+            </p>
+          )}
+
           {/* Options de découpage par sous-lots (Chunking) */}
           {totalItems > 1 && (
             <div className="bg-violet-50/50 border border-violet-100 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -204,7 +226,7 @@ export default function ExternalSupervisionModal({ mode = 'supervision', tasks, 
                   <Aide cle="sousLots" />
                 </h4>
                 <p className="text-xs text-slate-500 mt-1">
-                  Recommandé : 5 copies max pour Claude Opus (limite de 4096 tokens en sortie).
+                  Recommandé : {tailleConseillee} copie(s) max par sous-lot{tailleConseillee < 5 ? " (texte de référence et rapports longs)" : " pour Claude Opus (limite de 4096 tokens en sortie)"}.
                 </p>
               </div>
               <div className="flex items-center gap-3 shrink-0">
@@ -219,8 +241,9 @@ export default function ExternalSupervisionModal({ mode = 'supervision', tasks, 
                   className="text-xs bg-white border border-slate-200 rounded-lg px-2 py-1.5 outline-none font-bold text-slate-700 shadow-sm"
                 >
                   <option value={1}>1 copie</option>
-                  <option value={3}>3 copies</option>
-                  <option value={5}>5 copies (recommandé)</option>
+                  <option value={2}>2 copies{tailleConseillee === 2 ? " (recommandé)" : ""}</option>
+                  <option value={3}>3 copies{tailleConseillee === 3 ? " (recommandé)" : ""}</option>
+                  <option value={5}>5 copies{tailleConseillee === 5 ? " (recommandé)" : ""}</option>
                   <option value={10}>10 copies</option>
                   <option value={15}>15 copies</option>
                   <option value={30}>30 copies</option>

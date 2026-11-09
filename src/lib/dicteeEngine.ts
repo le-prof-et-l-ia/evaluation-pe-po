@@ -203,34 +203,3 @@ export function computeDictationScore(
     breakdown,
   };
 }
-
-/**
- * Génère le Markdown pour la double évaluation externe de dictée (sans clé API).
- */
-export function buildDictationExternalMarkdown(
-  studentText: string,
-  referenceText: string,
-  maxScore: number,
-  penalties: DictationPenaltyConfig,
-  customInstructions?: string
-): string {
-  return `# Consignes pour la double évaluation externe d'une dictée
-
-Copiez et collez l'intégralité du contenu ci-dessous dans une IA externe (Claude, ChatGPT, etc.) :
-
-\`\`\`markdown
-${buildDictationSystemPrompt()}
-
-${buildDictationUserPrompt(studentText, referenceText, customInstructions)}
-
-RAPPEL DU BARÈME DE PÉNALITÉ :
-- Faute de grammaire : -${penalties.grammar} pt
-- Faute d'usage : -${penalties.usage} pt
-- Faute d'accent : -${penalties.accent} pt
-- Faute de ponctuation : -${penalties.punctuation} pt
-- Note maximale de départ : ${maxScore} points
-
-Renvoie UNIQUEMENT le bloc JSON valide conforme aux instructions.
-\`\`\`
-`;
-}

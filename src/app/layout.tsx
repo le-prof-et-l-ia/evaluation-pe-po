@@ -8,7 +8,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Correcteur de PE",
+  title: "Le Prof et l'IA",
   description: "Application officielle d'examen et correction DELF pour Google AI",
 };
 

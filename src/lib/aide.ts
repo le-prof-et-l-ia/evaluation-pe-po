@@ -62,7 +62,7 @@ const AIDE_GENERAL = {
     texte: [
       "• Dans l'appli : la seconde évaluation est faite automatiquement par Gemini, avec votre clé API.",
       "• IA externe (sans clé) : l'application prépare un texte de consignes que vous donnez vous-même à l'IA de votre choix (Claude, ChatGPT, Gemini…), dans le cadre de votre abonnement, puis vous recollez sa réponse. Rien n'est envoyé automatiquement.",
-      "L'IA externe n'est disponible que pour le DELF B1 et B2 (production écrite et orale).",
+      "La double évaluation, et donc ce choix, n'existe que pour le DELF B1 et B2 (production écrite et orale). L'évaluation initiale par une IA externe, elle, est ouverte à toutes les épreuves.",
     ],
   },
 
@@ -73,7 +73,7 @@ const AIDE_GENERAL = {
       "Fait corriger cette copie par une IA externe (Claude, ChatGPT…) au lieu de Gemini. Aucune clé API n'est nécessaire.",
       "Avant de cliquer : remplissez le sujet et le texte à évaluer (texte de la copie ou transcription de l'enregistrement, tapé, collé ou obtenu automatiquement).",
       "Une fenêtre s'ouvre en deux étapes : 1) copiez ou téléchargez les consignes et donnez-les à l'IA ; 2) collez sa réponse dans la fenêtre. Le bilan s'affiche alors comme une correction normale.",
-      "Disponible pour le DELF B1 et B2 uniquement : les consignes données à l'IA suivent la grille du DELF.",
+      "Disponible pour toutes les épreuves : les consignes données à l'IA sont celles de la correction interne de l'épreuve. La note n'est jamais reprise de l'IA : l'application la recalcule avec le barème de l'épreuve.",
     ],
   },
   evalExterneLot: {
@@ -81,7 +81,7 @@ const AIDE_GENERAL = {
     texte: [
       "Fait corriger par une IA externe (Claude, ChatGPT…) toutes les copies de ce lot dont le texte a été lu mais pas encore évalué. Aucune clé API n'est nécessaire.",
       "Les copies sont réparties en sous-lots (5 par défaut). Pour chaque sous-lot : copiez les consignes, soumettez-les à l'IA dans une nouvelle conversation, puis collez sa réponse. Les notes s'ajoutent au lot au fur et à mesure.",
-      "Disponible pour le DELF B1 et B2 uniquement.",
+      "Disponible pour toutes les épreuves. Le texte de référence (dictée, texte source, corrigé, corpus…) n'est écrit qu'une fois, puis vient un bloc par copie. Les notes sont recalculées par l'application avec le barème de l'épreuve.",
     ],
   },
   doubleEvalExterneLot: {
@@ -97,7 +97,7 @@ const AIDE_GENERAL = {
     texte: [
       "Une IA ne peut pas rédiger une réponse trop longue en une seule fois : au-delà de quelques copies, sa réponse risque d'être coupée.",
       "Les copies sont donc réparties en petits groupes. Traitez chaque sous-lot dans une nouvelle conversation avec l'IA, puis collez sa réponse dans l'onglet correspondant. Un compteur indique les copies déjà traitées.",
-      "5 copies par sous-lot conviennent dans la plupart des cas ; réduisez à 1 ou 3 si les réponses sont coupées.",
+      "Tailles conseillées : 5 copies (DELF, dictée, grammaire), 3 (traduction, interprétation), 2 (composition). Réduisez si les réponses sont coupées.",
     ],
   },
   automatisationExterne: {
@@ -108,7 +108,7 @@ const AIDE_GENERAL = {
       "• 2. Dans votre application d'IA, donnez-lui ce fichier CONSIGNES.md. Elle traite toutes les copies et dépose ses résultats dans le sous-dossier « livrables ».",
       "• 3. Revenez ici et cliquez sur « Importer livrables ». Les résultats s'affichent dans l'écran de révision du lot.",
       "Le dossier d'échange est créé dans le dossier de sortie s'il est défini, sinon dans le dossier de l'application (data/outputs).",
-      "La lecture des copies (OCR, transcription) fonctionne pour toutes les épreuves ; la correction, pour le DELF B1 et B2 uniquement.",
+      "Ce dossier fonctionne pour toutes les épreuves, pour la lecture des copies (OCR, transcription) comme pour la correction. En interprétation, l'IA ne reçoit que la transcription écrite : fluidité, débit et prononciation ne peuvent pas être jugés sur un texte.",
     ],
   },
 } satisfies Record<string, EntreeAide>;

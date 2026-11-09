@@ -16,7 +16,7 @@ if [ -d "$HOME/.fnm" ]; then
 fi
 
 echo "===================================================================="
-echo "         Evaluation DELF B1/B2 (PE & PO) - Lanceur macOS"
+echo "         Le Prof et l'IA - Lanceur macOS"
 echo "===================================================================="
 echo ""
 

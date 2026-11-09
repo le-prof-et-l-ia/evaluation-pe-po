@@ -270,7 +270,7 @@ export async function POST(req: Request) {
                   }
 
                   await transporter.sendMail({
-                    from: `"Évaluation DELF" <${emailUser}>`,
+                    from: `"Le Prof et l'IA" <${emailUser}>`,
                     to: recipient,
                     // Modèle d'e-mail des réglages, comme l'envoi manuel ; texte par défaut s'il est vide.
                     subject: (typeof emailSubject === 'string' && emailSubject.trim()) ? emailSubject : `Votre bilan de production écrite DELF ${level || 'B2'}`,

@@ -256,7 +256,7 @@ export async function POST(req: Request) {
                   const subjectHeader = isInterpretation ? "Votre bilan d'évaluation — Interprétation orale" : `Votre bilan de production orale ${levelLabel}`;
                   const bodyIntro = isInterpretation ? "Voici le bilan de votre interprétation orale." : `Voici le bilan de votre production orale ${levelLabel}.`;
                   await transporter.sendMail({
-                    from: `"Évaluation DELF" <${emailUser}>`,
+                    from: `"Le Prof et l'IA" <${emailUser}>`,
                     to: recipient,
                     // Même modèle d'e-mail (objet et corps) que l'envoi manuel, s'il est fourni.
                     subject: (typeof emailSubject === 'string' && emailSubject.trim()) ? emailSubject : subjectHeader,

@@ -14,6 +14,9 @@ import {
   type ExternalSupervisionConfig,
 } from './externalSupervision';
 import { sanitizeFilename } from '../pathSafety';
+import { getInterpretationTranscriptionPrompt } from './interpretationEngine';
+import { estDelf, type ConfigEpreuve } from '../epreuves/registre';
+import { preparerConsignesEvalEpreuve, finaliserLivrableEpreuve } from '../epreuves/echange';
 
 export type ExternalBatchTaskType = 'ocr' | 'eval' | 'supervision';
 
@@ -32,6 +35,10 @@ export interface PrepareBatchExternalParams {
   exchangeFolder: string;
   items: BatchExternalItem[];
   config: ExternalSupervisionConfig;
+  /** Type d'épreuve ('delf_b1', 'delf_b2', 'interpretation'). */
+  examType?: string;
+  /** Configuration d'une épreuve hors DELF (discours source, barème…). */
+  examConfig?: ConfigEpreuve;
 }
 
 export interface ImportBatchExternalParams {
@@ -39,14 +46,20 @@ export interface ImportBatchExternalParams {
   exchangeFolder: string;
   items: BatchExternalItem[];
   config: ExternalSupervisionConfig;
+  examType?: string;
+  examConfig?: ConfigEpreuve;
 }
+
+const DOUBLE_EVAL_DELF_SEULEMENT = "La double évaluation est réservée au DELF B1 et B2 : pour l'interprétation, la première évaluation est conservée.";
 
 /**
  * Prépare l'arborescence et les fichiers d'instructions pour l'IA externe de bureau
  * (Claude Desktop, ChatGPT Desktop ou IA agentique avec accès aux fichiers locaux).
  */
 export async function prepareBatchExternalPackage(params: PrepareBatchExternalParams) {
-  const { taskType, exchangeFolder, items, config } = params;
+  const { taskType, exchangeFolder, items, config, examType, examConfig } = params;
+  const horsDelf = !estDelf(examType);
+  if (horsDelf && taskType === 'supervision') throw new Error(DOUBLE_EVAL_DELF_SEULEMENT);
 
   if (!fs.existsSync(exchangeFolder)) {
     fs.mkdirSync(exchangeFolder, { recursive: true });
@@ -57,14 +70,14 @@ export async function prepareBatchExternalPackage(params: PrepareBatchExternalPa
   if (!fs.existsSync(sourcesDir)) fs.mkdirSync(sourcesDir, { recursive: true });
   if (!fs.existsSync(livrablesDir)) fs.mkdirSync(livrablesDir, { recursive: true });
 
-  const examTitle = `DELF ${config.level}`;
+  const examTitle = horsDelf ? 'Interprétation' : `DELF ${config.level}`;
   const criteriaList = CRITERIA_BY_LEVEL[config.level] || CRITERIA_BY_LEVEL.B2;
   const criteriaKeys = criteriaList.join(', ');
 
   let instructionsMd = '';
 
   if (taskType === 'ocr') {
-    const ocrGuidelines = getAudioTranscriptionPrompt(config.level);
+    const ocrGuidelines = horsDelf ? getInterpretationTranscriptionPrompt() : getAudioTranscriptionPrompt(config.level);
     instructionsMd = `# 🎙️ Instructions de Transcription Audio / OCR Externe — ${examTitle} Production Orale
 Total d'enregistrements / fichiers à transcrire : ${items.length}
 
@@ -97,6 +110,9 @@ Format JSON attendu (\`<nom_du_fichier>.ocr.json\`) :
 
 *(Alternative : tu peux aussi créer un unique fichier consolidé \`${path.join(livrablesDir, 'resultats_ocr.json')}\` contenant un tableau de ces objets).*
 `;
+  } else if (taskType === 'eval' && horsDelf) {
+    // Interprétation : consignes et format de réponse propres à l'épreuve, discours source une seule fois.
+    instructionsMd = preparerConsignesEvalEpreuve('po', examType!, examConfig || {}, items, sourcesDir, livrablesDir);
   } else if (taskType === 'eval') {
     const systemPrompt = buildEvalSystemPrompt(config.level, config.language, config.notationType);
 
@@ -229,7 +245,9 @@ Schéma JSON attendu :
  * les résultats livrés par l'IA de bureau (Claude / ChatGPT).
  */
 export async function importBatchExternalPackage(params: ImportBatchExternalParams) {
-  const { taskType, exchangeFolder, items, config } = params;
+  const { taskType, exchangeFolder, items, config, examType, examConfig } = params;
+  const horsDelf = !estDelf(examType);
+  if (horsDelf && taskType === 'supervision') throw new Error(DOUBLE_EVAL_DELF_SEULEMENT);
 
   if (!fs.existsSync(exchangeFolder)) {
     throw new Error(`Le dossier d'échange "${exchangeFolder}" n'existe pas.`);
@@ -339,6 +357,18 @@ export async function importBatchExternalPackage(params: ImportBatchExternalPara
           studentName: rawData.studentName || item.studentName || null,
           studentEmail: rawData.studentEmail || item.studentEmail || null,
           ocrAlerts: Array.isArray(rawData.ocrAlerts) ? rawData.ocrAlerts : [],
+          modelUsed: 'IA externe (Desktop)',
+        });
+      } else if (taskType === 'eval' && horsDelf) {
+        const finalized = finaliserLivrableEpreuve('po', examType!, examConfig || {}, item, rawData);
+        results.push({
+          ...finalized,
+          file: item.file,
+          subject: item.subject || 'Interprétation',
+          studentName: rawData.studentName || item.studentName || null,
+          studentEmail: rawData.studentEmail || item.studentEmail || null,
+          status: 'success',
+          isOcrOnly: false,
           modelUsed: 'IA externe (Desktop)',
         });
       } else if (taskType === 'eval') {

@@ -2,10 +2,19 @@ import { GoogleGenAI, Type } from '@google/genai';
 import { buildEvalSystemPrompt, buildSupervisorPrompt, buildEvalUserPrompt, buildSupervisorUserPrompt, buildLoopVerificationPrompt, computeJuryResult, sanitizeScores, sanitizeHallucinations, safeParseJson, cleanEvalForPrompt, buildArbiterSystemPrompt, buildArbiterUserPrompt, getCriteriaKeys, getOcrPrompt } from './promptUtils';
 import { finalizeArbiter } from './externalSupervision';
 import { getFriendlyModelName } from './modelNames';
-import { buildDictationSystemPrompt, buildDictationUserPrompt, computeDictationScore, getDictationOcrPrompt } from './dicteeEngine';
+import { buildDictationSystemPrompt, buildDictationUserPrompt, getDictationOcrPrompt } from './dicteeEngine';
 import { buildTranslationSystemPrompt, buildTranslationUserPrompt, DEFAULT_TRANSLATION_CRITERIA } from './traductionEngine';
-import { buildGrammarSystemPrompt, buildGrammarUserPrompt, computeGrammarGlobalScore } from './grammaireEngine';
-import { buildCompositionSystemPrompt, buildCompositionUserPrompt, getCompositionCriteria, type CompositionSubType } from './compositionEngine';
+import { buildGrammarSystemPrompt, buildGrammarUserPrompt } from './grammaireEngine';
+import { buildCompositionSystemPrompt, buildCompositionUserPrompt, type CompositionSubType } from './compositionEngine';
+import {
+  finaliserDictee,
+  finaliserTraduction,
+  finaliserGrammaire,
+  finaliserComposition,
+  criteresComposition,
+  criteresTraduction,
+  type ParamsComposition,
+} from './epreuves/finalisation';
 import type { DictationPenaltyConfig, CustomCriterion } from './customExamTypes';
 
 import { withRetryAndFallback as sharedRetry, type KeyConfig, isKeyError, executeWithTimeout, getOrderedFreeKeys } from './retryUtils';
@@ -838,27 +847,7 @@ export async function evaluateDictation(
     return safeParseJson<any>(response.text || "{}");
   }, apiKeys, onKeySelected);
 
-  const errors = Array.isArray(rawJson.errors) ? rawJson.errors : [];
-  const scoreCalc = computeDictationScore(errors, penalties, maxScore);
-
-  return {
-    examType: 'dictee' as const,
-    globalScore: scoreCalc.globalScore,
-    maxScore,
-    penaltiesTotal: scoreCalc.penaltiesTotal,
-    errors: scoreCalc.errorsProcessed,
-    breakdown: scoreCalc.breakdown,
-    transcription: studentTranscription,
-    referenceText,
-    feedback: rawJson.feedback || '',
-    studentName: null as string | null,
-    studentEmail: null as string | null,
-    errorsTable: scoreCalc.errorsProcessed.map(e => ({
-      original: e.original,
-      correction: e.correction,
-      rule: `[${e.type.toUpperCase()}${e.isRepeated ? ' - Répétée' : ''} : -${e.penaltyApplied} pt] ${e.rule}`
-    }))
-  };
+  return finaliserDictee(rawJson, studentTranscription, { referenceText, maxScore, penalties, customInstructions });
 }
 
 export async function evaluateTranslation(
@@ -875,7 +864,7 @@ export async function evaluateTranslation(
   onKeySelected?: (info: { key: string, isCustom: boolean }) => void
 ) {
   const targetModel = resolveGeminiModel(evalModel);
-  const systemInstruction = buildTranslationSystemPrompt(maxScore, sourceLang, targetLang, criteria);
+  const systemInstruction = buildTranslationSystemPrompt(maxScore, sourceLang, targetLang, criteresTraduction({ sourceText, maxScore, sourceLang, targetLang, criteria }));
   const userPrompt = buildTranslationUserPrompt(studentTranslation, sourceText, modelTranslation, customInstructions);
 
   const rawJson = await runWithGeminiModelFallback(targetModel, async (activeModel, apiKey) => {
@@ -893,30 +882,10 @@ export async function evaluateTranslation(
     return safeParseJson<any>(response.text || "{}");
   }, apiKeys, onKeySelected);
 
-  const criteriaScores = rawJson.criteriaScores || {};
-  let sumCrit = 0;
-  for (const c of criteria) {
-    if (criteriaScores[c.key] !== undefined) {
-      sumCrit += Number(criteriaScores[c.key]) || 0;
-    }
-  }
-  const globalScore = rawJson.globalScore !== undefined ? Number(rawJson.globalScore) : sumCrit;
-
-  return {
-    examType: 'traduction' as const,
-    globalScore: Math.round(globalScore * 100) / 100,
-    maxScore,
-    criteriaScores,
-    justifications: rawJson.justifications || {},
-    advices: rawJson.advices || {},
-    errorsTable: Array.isArray(rawJson.errorsTable) ? rawJson.errorsTable : [],
-    detailedErrors: Array.isArray(rawJson.detailedErrors) ? rawJson.detailedErrors : [],
-    transcription: studentTranslation,
-    sourceText,
-    modelTranslation,
-    studentName: null as string | null,
-    studentEmail: null as string | null
-  };
+  return finaliserTraduction(rawJson, studentTranslation, {
+    sourceText, maxScore, modelTranslation, customInstructions,
+    sourceLang, targetLang, criteria,
+  });
 }
 
 export async function evaluateGrammar(
@@ -948,22 +917,7 @@ export async function evaluateGrammar(
     return safeParseJson<any>(response.text || "{}");
   }, apiKeys, onKeySelected);
 
-  const items = Array.isArray(rawJson.items) ? rawJson.items : [];
-  const globalScore = computeGrammarGlobalScore(items, maxScore);
-
-  return {
-    examType: 'grammaire' as const,
-    globalScore,
-    maxScore,
-    items,
-    summaryFeedback: rawJson.summaryFeedback || '',
-    errorsTable: Array.isArray(rawJson.errorsTable) ? rawJson.errorsTable : [],
-    transcription: studentAnswers,
-    subject: exerciseSubject,
-    answerKey: answerKey || '',
-    studentName: null as string | null,
-    studentEmail: null as string | null
-  };
+  return finaliserGrammaire(rawJson, studentAnswers, { exerciseSubject, maxScore, answerKey, customInstructions });
 }
 
 export async function evaluateComposition(
@@ -981,9 +935,11 @@ export async function evaluateComposition(
   disableStandardGrid: boolean = false
 ) {
   const targetModel = resolveGeminiModel(evalModel);
-  const activeCriteria = disableStandardGrid 
-    ? [] 
-    : ((criteria && criteria.length > 0) ? criteria : getCompositionCriteria(compositionType, maxScore));
+  const params: ParamsComposition = {
+    subject, compositionType, maxScore, corpusText, targetLanguage,
+    customInstructions, criteria, disableStandardGrid: !!disableStandardGrid,
+  };
+  const activeCriteria = criteresComposition(params);
 
   const systemInstruction = buildCompositionSystemPrompt(
     compositionType,
@@ -1017,58 +973,7 @@ export async function evaluateComposition(
     return safeParseJson<any>(response.text || "{}");
   }, apiKeys, onKeySelected);
 
-  const criteriaScores: Record<string, number> = rawJson.criteriaScores || {};
-  const customCriteriaEvaluated = Array.isArray(rawJson.customCriteriaEvaluated) ? rawJson.customCriteriaEvaluated : [];
-
-  // En mode critères libres, synchroniser les maps avec customCriteriaEvaluated
-  if (disableStandardGrid && customCriteriaEvaluated.length > 0) {
-    if (!rawJson.justifications) rawJson.justifications = {};
-    if (!rawJson.advices) rawJson.advices = {};
-    customCriteriaEvaluated.forEach((c: any) => {
-      if (c.key && criteriaScores[c.key] === undefined && c.score !== undefined) {
-        criteriaScores[c.key] = c.score;
-      }
-      if (c.key && !rawJson.justifications[c.key] && c.justification) {
-        rawJson.justifications[c.key] = c.justification;
-      }
-      if (c.key && !rawJson.advices[c.key] && c.advice) {
-        rawJson.advices[c.key] = c.advice;
-      }
-    });
-  }
-
-  let sumCrit = 0;
-  const listToSum = disableStandardGrid && customCriteriaEvaluated.length > 0
-    ? customCriteriaEvaluated
-    : activeCriteria;
-
-  for (const c of listToSum) {
-    if (criteriaScores[c.key] !== undefined) {
-      sumCrit += Number(criteriaScores[c.key]) || 0;
-    }
-  }
-  const globalScore = rawJson.globalScore !== undefined ? Number(rawJson.globalScore) : sumCrit;
-
-  return {
-    examType: 'composition' as const,
-    compositionType,
-    targetLanguage,
-    globalScore: Math.round(globalScore * 100) / 100,
-    maxScore,
-    disableStandardGrid: !!disableStandardGrid,
-    customCriteriaEvaluated: customCriteriaEvaluated.length > 0 ? customCriteriaEvaluated : undefined,
-    criteriaScores,
-    justifications: rawJson.justifications || {},
-    advices: rawJson.advices || {},
-    generalFeedback: rawJson.generalFeedback || '',
-    errorsTable: Array.isArray(rawJson.errorsTable) ? rawJson.errorsTable : [],
-    transcription: studentText,
-    subject,
-    corpusText,
-    customInstructions,
-    studentName: null as string | null,
-    studentEmail: null as string | null
-  };
+  return finaliserComposition(rawJson, studentText, params);
 }
 
 

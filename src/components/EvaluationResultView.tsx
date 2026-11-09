@@ -80,6 +80,7 @@ export interface EvaluationData {
 // Ré-export depuis la source unique pour compatibilité avec les imports existants.
 export { getFriendlyModelName } from "@/lib/modelNames";
 import { getFriendlyModelName } from "@/lib/modelNames";
+import { jsonHistorique } from "@/lib/historique";
 
 interface Props {
   data: EvaluationData;
@@ -719,7 +720,7 @@ export default function EvaluationResultView({
   const corpsHistorique = () => {
     const d: any = latestRef.current;
     const effectiveSubject = subject || d.subject || d._comparison?.firstEval?.subject || d._comparison?.secondEval?.subject || "";
-    return JSON.stringify({ ...d, subject: effectiveSubject, level });
+    return jsonHistorique('pe', { ...d, subject: effectiveSubject, level });
   };
 
   // Les retouches de l'évaluation en cours sont remises à zéro quand une nouvelle évaluation arrive.
@@ -865,7 +866,7 @@ export default function EvaluationResultView({
       const resHistorique = await fetch("/api/history", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...editableData, subject: effectiveSubject, level }),
+        body: jsonHistorique('pe', { ...editableData, subject: effectiveSubject, level }),
       }).catch(err => { console.error("Erreur sauvegarde historique:", err); return null; });
       if (resHistorique?.ok) {
         setSaveState('idle');

@@ -1,9 +1,9 @@
 @echo off
 setlocal enabledelayedexpansion
-title Evaluation PE et PO - Console Serveur
+title Le Prof et l'IA - Console Serveur
 
 echo ====================================================================
-echo               Evaluation PE et PO - Lanceur Windows
+echo               Le Prof et l'IA - Lanceur Windows
 echo ====================================================================
 echo.
 

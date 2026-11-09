@@ -1,5 +1,5 @@
 ' =====================================================================
-'  Evaluation PE et PO - Lanceur Windows en arriere-plan (sans console)
+'  Le Prof et l'IA - Lanceur Windows en arriere-plan (sans console)
 '  - Verifie la presence de Node.js
 '  - Installe les composants au premier lancement (journal_installation.txt)
 '  - Compile si necessaire (journal_compilation.txt)
@@ -7,7 +7,7 @@
 ' =====================================================================
 Option Explicit
 
-Const TITRE = "Evaluation PE et PO"
+Const TITRE = "Le Prof et l'IA"
 Const LOCK_MAX_MINUTES = 30
 
 Dim WshShell, fso, scriptPath, lockPath, markerPath

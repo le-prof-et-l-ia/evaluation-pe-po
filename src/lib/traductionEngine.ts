@@ -142,30 +142,3 @@ ${studentTranslation.trim()}
 ${customBlock}
 Procède à l'évaluation méthodique de cette traduction et renvoie le rapport au format JSON strict.`;
 }
-
-/**
- * Génère le markdown pour la double évaluation externe de traduction.
- */
-export function buildTranslationExternalMarkdown(
-  studentTranslation: string,
-  sourceText: string,
-  maxScore: number,
-  modelTranslation?: string,
-  customInstructions?: string,
-  sourceLang: string = "Français",
-  targetLang: string = "Français",
-  criteria: CustomCriterion[] = DEFAULT_TRANSLATION_CRITERIA
-): string {
-  return `# Consignes pour la double évaluation externe d'une traduction
-
-Copiez et collez l'intégralité du contenu ci-dessous dans une IA externe (Claude, ChatGPT, etc.) :
-
-\`\`\`markdown
-${buildTranslationSystemPrompt(maxScore, sourceLang, targetLang, criteria)}
-
-${buildTranslationUserPrompt(studentTranslation, sourceText, modelTranslation, customInstructions)}
-
-Renvoie UNIQUEMENT le bloc JSON valide conforme aux instructions.
-\`\`\`
-`;
-}

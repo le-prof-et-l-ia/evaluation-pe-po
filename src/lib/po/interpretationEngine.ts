@@ -134,26 +134,22 @@ ${customBlock}
 Évalue minutieusement la prestation de l'interprète et retourne le rapport au format JSON strict.`;
 }
 
-export function buildInterpretationExternalMarkdown(
-  studentTranscription: string,
-  sourceSpeech: string,
-  maxScore: number,
-  mode: 'consecutive' | 'simultaneous' = 'consecutive',
-  sourceLang: string = "Français",
-  targetLang: string = "Français",
-  criteria: CustomCriterion[] = DEFAULT_INTERPRETATION_CRITERIA,
-  customInstructions?: string
-): string {
-  return `# Consignes pour la double évaluation externe d'une épreuve d'interprétation
+/**
+ * Consignes de transcription d'une prestation d'interprétation (dossier d'échange,
+ * pour une application d'IA de bureau qui a accès aux fichiers audio).
+ * La transcription doit rester fidèle : c'est elle seule que l'évaluateur externe lira.
+ */
+export function getInterpretationTranscriptionPrompt(): string {
+  return `Tu transcris l'enregistrement d'un étudiant-interprète qui restitue un discours.
+RÈGLES :
+1. Transcris mot à mot ce que dit l'étudiant, dans la langue où il parle, SANS corriger ni reformuler : fautes de langue, calques, phrases inachevées et omissions restent tels quels.
+2. Note les hésitations et les reprises telles qu'elles s'entendent (« euh », « hum », mots répétés, autocorrections), et les silences notables sous la forme [pause] ou [silence long].
+3. Ce qui est inaudible est noté [inaudible] ; ne devine jamais un passage que tu n'entends pas.
+4. Ne transcris pas le discours de l'orateur s'il est présent sur l'enregistrement : uniquement la restitution de l'étudiant.
 
-Copiez et collez l'intégralité du contenu ci-dessous dans une IA externe (Claude, ChatGPT, etc.) :
-
-\`\`\`markdown
-${buildInterpretationSystemPrompt(maxScore, mode, sourceLang, targetLang, criteria)}
-
-${buildInterpretationUserPrompt(studentTranscription, sourceSpeech, customInstructions)}
-
-Renvoie UNIQUEMENT le bloc JSON valide conforme aux instructions.
-\`\`\`
-`;
+FORMAT DE SORTIE JSON STRICT :
+{
+  "studentName": "Nom et prénom s'ils sont annoncés, sinon null",
+  "transcription": "Transcription intégrale et fidèle de la restitution de l'étudiant"
+}`;
 }
