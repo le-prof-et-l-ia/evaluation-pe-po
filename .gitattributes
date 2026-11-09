@@ -1,0 +1,10 @@
+# Scripts Mac/Linux : toujours en fin de ligne LF (sinon bash echoue)
+*.command text eol=lf
+*.sh      text eol=lf
+
+# Scripts Windows : toujours en CRLF, y compris dans le ZIP telecharge
+# depuis GitHub (cmd.exe gere mal les .bat en LF : sauts d'etiquettes)
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.vbs text eol=crlf
+*.ps1 text eol=crlf
