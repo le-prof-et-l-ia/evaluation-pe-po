@@ -1,24 +1,35 @@
 # Évaluation PE et PO (Public)
 
-Application locale et unifiée d'évaluation assistée par IA pour les épreuves de **Production Écrite (PE)** et **Production Orale (PO)** du **DELF B1** et **DELF B2**.
+Application locale de **correction et de création d'épreuves assistée par IA**, pour les enseignants de français et de FLE.
 
-## Fonctionnalités principales
+Elle fonctionne avec une clé API Google Gemini (une clé gratuite suffit pour commencer), **ou sans aucune clé API** : vous confiez alors le travail à l'IA de votre choix (Claude, ChatGPT, Gemini…) dans le cadre de votre abonnement, par simple copier-coller.
 
-- **Production Écrite (`/`)** :
-  - Évaluation de copies manuscrites (OCR multimodal) ou dactylographiées.
-  - Double évaluation avec arbitrage automatique.
-  - Mode sans clé API via supervision externe (export/import Claude Web).
-  - Génération de bilans PDF anonymes et détaillés pour l'apprenant.
-  - Traitement unitaire et traitement par lot (SSE stream en temps réel).
-- **Production Orale (`/po`)** :
-  - Évaluation de transcriptions audio (monologue suivi, débat, entretien).
-  - Mode en deux étapes (évaluation exposé partie 1 + relances / questions générées pour la partie 2 + bilan complet).
-  - Générateur de sujets oraux DELF B1 / B2.
-  - Bilans PDF oraux personnalisés.
-- **Gestion commune** :
-  - Clés API Google Gemini (gratuites et/ou payante) partagées entre PE et PO, avec bascule automatique entre les clés.
-  - Gestion des classes et réconciliation automatique des apprenants.
-  - Historique unifié avec filtrage par épreuve (`Toutes`, `Production Écrite`, `Production Orale`).
+## Ce que fait l'application
+
+### Correction
+
+- **DELF B1 et B2** : production écrite (PE) et production orale (PO), selon les grilles officielles.
+  - À l'oral : monologue suivi, débat, entretien, avec une évaluation en deux étapes (exposé, puis relances et questions générées pour la seconde partie).
+- **Dictées** : barème classique (/10) ou de concours (/20 avec points négatifs).
+- **Rédactions** de niveau collège (type DNB) et **dissertations** de niveau lycée (type baccalauréat de français), sur 20.
+- **Essais en langue étrangère**, **traductions**, **exercices de grammaire** et **interprétation consécutive**.
+- Copies manuscrites (lecture automatique, OCR) ou dactylographiées ; enregistrements audio des productions orales (MP3, WAV, M4A…), transcrits automatiquement.
+- Double évaluation avec arbitrage, correction unitaire ou par lot, bilans PDF anonymes et détaillés pour les apprenants, envoi des bilans par e-mail.
+
+### Création d'épreuves FLE
+
+- **Textes déclencheurs** adaptés d'articles de presse récents, pour la production écrite et la production orale (B1, B2, C1).
+- **Épreuves complètes de compréhension écrite** : texte, questionnaire (QCM, vrai/faux, questions ouvertes), corrigé et barème.
+
+### Deux façons d'utiliser l'IA
+
+- **Avec une clé API Google Gemini** : tout est automatique. Plusieurs clés (gratuites et/ou payantes) peuvent être enregistrées, avec bascule automatique de l'une à l'autre.
+- **Sans clé API** : l'application prépare les consignes, vous les soumettez à une IA externe avec votre abonnement, puis vous réimportez sa réponse. Ce mode couvre la lecture des copies, la transcription, l'évaluation et la double évaluation. La création d'épreuves nécessite en revanche une clé Gemini.
+
+### Gestion
+
+- Classes et réconciliation automatique des apprenants.
+- Historique unifié, filtrable par épreuve (`Toutes`, `Production Écrite`, `Production Orale`).
 
 ## Avant le premier lancement
 
