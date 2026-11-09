@@ -7,6 +7,7 @@ import { generatePEMarkdown } from "@/lib/markdownGenerator";
 import { formatScore } from "@/lib/scoreUtils";
 import { getCriteriaConfig } from "@/lib/promptUtils";
 import { DEFAULT_TRANSLATION_CRITERIA } from "@/lib/traductionEngine";
+import Aide from "@/components/Aide";
 import { getCompositionCriteria, getCompositionTypeLabel, type CompositionSubType } from "@/lib/compositionEngine";
 
 export interface EvaluationData {
@@ -251,7 +252,8 @@ const CriterionCard = ({
   onJustificationChange,
   onAdviceChange,
   level = 'B2',
-  gradingMode = 'delf'
+  gradingMode = 'delf',
+  afficherAide = false
 }: { 
   label: string, 
   score: number, 
@@ -263,7 +265,8 @@ const CriterionCard = ({
   onJustificationChange?: (val: string) => void,
   onAdviceChange?: (val: string) => void,
   level?: string,
-  gradingMode?: 'detailed' | 'delf'
+  gradingMode?: 'detailed' | 'delf',
+  afficherAide?: boolean
 }) => {
   const [isOpen, setIsOpen] = useState(true);
 
@@ -339,6 +342,7 @@ const CriterionCard = ({
               <h5 className={"font-black text-xs uppercase tracking-widest text-blue-600 mb-3 flex items-center print:hidden"}>
                   <svg className={"w-4 h-4 mr-2"} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5"></path></svg>
                   Descripteurs de performance DELF
+                  {afficherAide && <Aide cle="c_descripteurs" taille={14} className="ml-1.5" />}
               </h5>
               {isEditing ? (
                 <>
@@ -359,6 +363,7 @@ const CriterionCard = ({
                 <h5 className={"font-black text-xs uppercase tracking-widest text-emerald-600 mb-3 flex items-center print:hidden"}>
                     <svg className={"w-4 h-4 mr-2"} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M13 10V3L4 14h7v7l9-11h-7z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5"></path></svg>
                     Axes d'amélioration
+                    {afficherAide && <Aide cle="c_axesAmelioration" taille={14} className="ml-1.5" />}
                 </h5>
                 {isEditing ? (
                   <>
@@ -698,6 +703,85 @@ export default function EvaluationResultView({
     return getCriteriaConfig(level);
   }, [level, editableData.examType, editableData.compositionType, (editableData as any).disableStandardGrid, (editableData as any).customCriteriaEvaluated, maxGlobal]);
 
+  // ── Enregistrement automatique des retouches ─────────────────────────────
+  // Modifier une note ou un commentaire ne changeait que l'écran : tout était
+  // perdu si l'on quittait sans « Générer PDF » ou « Valider ». Les retouches
+  // sont désormais enregistrées dans l'historique (si le bilan y figure déjà),
+  // sinon un avertissement signale qu'elles ne sont pas conservées.
+  const [retouches, setRetouches] = useState(false);
+  const [editVersion, setEditVersion] = useState(0);
+  const [saveState, setSaveState] = useState<'idle' | 'unsaved' | 'pending' | 'saving' | 'saved' | 'error'>('idle');
+  const latestRef = useRef(editableData);
+  latestRef.current = editableData;
+  const pendingSaveRef = useRef(false);
+  const markEdited = () => { setRetouches(true); setEditVersion(v => v + 1); };
+
+  const corpsHistorique = () => {
+    const d: any = latestRef.current;
+    const effectiveSubject = subject || d.subject || d._comparison?.firstEval?.subject || d._comparison?.secondEval?.subject || "";
+    return JSON.stringify({ ...d, subject: effectiveSubject, level });
+  };
+
+  // Les retouches de l'évaluation en cours sont remises à zéro quand une nouvelle évaluation arrive.
+  useEffect(() => { setRetouches(false); }, [data._comparison]);
+
+  useEffect(() => {
+    if (editVersion === 0) return;
+    if (!latestRef.current.id) { setSaveState('unsaved'); return; }
+    setSaveState('pending');
+    pendingSaveRef.current = true;
+    const timeoutId = setTimeout(async () => {
+      setSaveState('saving');
+      try {
+        const res = await fetch("/api/history", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: corpsHistorique(),
+        });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        pendingSaveRef.current = false;
+        setSaveState('saved');
+        setTimeout(() => setSaveState(s => (s === 'saved' ? 'idle' : s)), 2500);
+      } catch (err) {
+        console.error("Enregistrement automatique des retouches :", err);
+        setSaveState('error');
+      }
+    }, 1500);
+    return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editVersion]);
+
+  // Si l'on quitte l'écran avant la fin du délai, on envoie quand même les retouches.
+  useEffect(() => {
+    return () => {
+      if (!pendingSaveRef.current || !latestRef.current.id) return;
+      try {
+        fetch("/api/history", { method: "POST", headers: { "Content-Type": "application/json" }, body: corpsHistorique(), keepalive: true }).catch(() => {});
+      } catch { /* rien à faire */ }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Fermeture de l'onglet avec des retouches non conservées : avertissement du navigateur.
+  useEffect(() => {
+    if (saveState === 'idle' || saveState === 'saved') return;
+    const avertir = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", avertir);
+    return () => window.removeEventListener("beforeunload", avertir);
+  }, [saveState]);
+
+  const lancerSupervision = (mode: 'internal' | 'external') => {
+    if (editableData._comparison && retouches) {
+      const ok = window.confirm(
+        "Relancer la 2e évaluation repart de la 1re évaluation d'origine.\n\n" +
+        "Les notes et commentaires que vous avez modifiés dans ce bilan seront perdus et remplacés par le nouveau résultat.\n\n" +
+        "Continuer ?"
+      );
+      if (!ok) return;
+    }
+    onSupervise?.(mode);
+  };
+
   const handleScoreChange = (criterion: string, value: number) => {
     const newScores = { ...editableData.criteriaScores, [criterion]: value };
     const rawGlobal = Object.values(newScores).reduce((a, b: any) => a + (Number(b) || 0), 0);
@@ -709,6 +793,7 @@ export default function EvaluationResultView({
     };
     setEditableData(updated);
     onDataChange?.(updated);
+    markEdited();
   };
 
   const handleJustificationChange = (criterion: string, value: string) => {
@@ -721,6 +806,7 @@ export default function EvaluationResultView({
     };
     setEditableData(updated);
     onDataChange?.(updated);
+    markEdited();
   };
 
   const handleAdviceChange = (criterion: string, value: string) => {
@@ -733,6 +819,7 @@ export default function EvaluationResultView({
     };
     setEditableData(updated);
     onDataChange?.(updated);
+    markEdited();
   };
 
   const scoreColor = editableData.globalScore >= passThreshold ? "text-emerald-600 bg-emerald-50 border-emerald-100 shadow-emerald-500/20" : "text-amber-600 bg-amber-50 border-amber-100 shadow-amber-500/20";
@@ -775,11 +862,24 @@ export default function EvaluationResultView({
 
       // Sauvegarder dans l'historique
       const effectiveSubject = subject || editableData.subject || (editableData as any)._comparison?.firstEval?.subject || (editableData as any)._comparison?.secondEval?.subject || "";
-      await fetch("/api/history", {
+      const resHistorique = await fetch("/api/history", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...editableData, subject: effectiveSubject, level }),
-      }).catch(err => console.error("Erreur sauvegarde historique:", err));
+      }).catch(err => { console.error("Erreur sauvegarde historique:", err); return null; });
+      if (resHistorique?.ok) {
+        setSaveState('idle');
+        pendingSaveRef.current = false;
+        if (!editableData.id) {
+          const json = await resHistorique.json().catch(() => null);
+          const nouvelId = json?.record?.id;
+          if (nouvelId) {
+            const avecId = { ...latestRef.current, id: nouvelId };
+            setEditableData(avecId);
+            onDataChange?.(avecId);
+          }
+        }
+      }
       
       setShowSavedMsg(true);
       setTimeout(() => setShowSavedMsg(false), 5000);
@@ -885,7 +985,7 @@ export default function EvaluationResultView({
                               cherchant « -- Non définie -- » dans la liste, ce que
                               rien ne signalait. */}
                           <div className="flex flex-col">
-                            <label className="text-[10px] font-black uppercase text-slate-400 mb-1">Classe</label>
+                            <label className="text-[10px] font-black uppercase text-slate-400 mb-1 flex items-center gap-1.5">Classe <Aide cle="c_classeBilan" taille={13} /></label>
                             <div className="flex items-center gap-1">
                               <select
                                   value={editableData.classId || ""}
@@ -922,6 +1022,7 @@ export default function EvaluationResultView({
                           <div className="flex flex-col">
                             <label className="text-[10px] font-black uppercase text-slate-400 mb-1 flex items-center gap-1.5 whitespace-nowrap">
                               Nom de l'étudiant
+                              <Aide cle="c_identiteEleve" taille={13} />
                               {(editableData as any).autoMatchedFrom && (
                                 <span className="text-amber-600 normal-case font-bold" title={`Rattaché automatiquement à partir de « ${(editableData as any).autoMatchedFrom.studentName} »`}>
                                   auto
@@ -973,6 +1074,7 @@ export default function EvaluationResultView({
                           <div className="flex flex-col flex-1 min-w-[200px] max-w-[260px]">
                             <label className="text-[10px] font-black uppercase text-slate-400 mb-1 flex items-center gap-1.5 whitespace-nowrap">
                               Adresse E-mail
+                              <Aide cle="c_emailBilan" taille={13} />
                               {identitySaveState === 'saving' && <span className="text-blue-500 normal-case font-bold">enregistrement…</span>}
                               {identitySaveState === 'saved' && <span className="text-emerald-600 normal-case font-bold">✓ enregistré</span>}
                               {identitySaveState === 'error' && <span className="text-rose-600 normal-case font-bold">échec</span>}
@@ -991,6 +1093,7 @@ export default function EvaluationResultView({
                           </div>
                           <div className="flex flex-col flex-shrink-0">
                             <label className="text-[10px] font-black uppercase text-slate-400 mb-1 whitespace-nowrap">Sujet de l'examen</label>
+                            <div className="flex items-center gap-1.5">
                             <button
                               type="button"
                               onClick={() => setShowSubjectCopyModal(true)}
@@ -1000,6 +1103,8 @@ export default function EvaluationResultView({
                               <Eye className="w-3.5 h-3.5 flex-shrink-0" />
                               {editableData.subject ? "Voir le sujet" : "Ajouter un sujet"}
                             </button>
+                            <Aide cle="c_voirSujet" taille={14} />
+                            </div>
                           </div>
                       </div>
 
@@ -1045,6 +1150,15 @@ export default function EvaluationResultView({
                         <span className={"text-xs font-black uppercase tracking-[0.2em] mb-1 opacity-70"}>Note Finale</span>
                         <p className={"text-6xl font-black"}>{formatScore(editableData.globalScore)}<span className={"text-3xl opacity-50"}>/{maxGlobal}</span></p>
                     </div>
+                    {saveState !== 'idle' && (
+                      <p className={"no-print text-xs font-bold text-center max-w-[260px] " + (saveState === 'saved' ? "text-emerald-600" : saveState === 'saving' || saveState === 'pending' ? "text-blue-500" : "text-amber-600")}>
+                        {saveState === 'unsaved' && "Modifications non enregistrées : cliquez sur « Générer PDF » ou « Valider » pour les conserver."}
+                        {saveState === 'pending' && "Modifications en cours d'enregistrement…"}
+                        {saveState === 'saving' && "Enregistrement dans l'historique…"}
+                        {saveState === 'saved' && "✓ Modifications enregistrées dans l'historique"}
+                        {saveState === 'error' && "Échec de l'enregistrement automatique : cliquez sur « Générer PDF » pour conserver vos modifications."}
+                      </p>
+                    )}
                   </div>
               </div>
 
@@ -1059,6 +1173,7 @@ export default function EvaluationResultView({
                     </span>
                     <span className="text-slate-200 font-medium">{editableData.fallbackNotice}</span>
                   </div>
+                  <Aide cle="c_repli" taille={16} className="ml-auto !text-slate-300 hover:!text-white" />
                 </div>
               )}
 
@@ -1074,11 +1189,12 @@ export default function EvaluationResultView({
                       <span>Voir les différences</span>
                     </button>
                   )}
+                  {editableData._comparison && <Aide cle="c_voirDifferences" taille={16} />}
 
                   {onSupervise && (
                     <>
                       <button
-                        onClick={() => onSupervise('external')}
+                        onClick={() => lancerSupervision('external')}
                         disabled={isSupervising}
                         className="flex items-center gap-1.5 px-4 py-2 bg-purple-50 text-purple-700 hover:bg-purple-100 transition-all font-bold text-xs border border-purple-200 rounded-xl shadow-sm hover:shadow active:scale-95 disabled:opacity-50 cursor-pointer"
                         title="Supervision avec une IA externe (copier-coller sans clé API)"
@@ -1088,7 +1204,7 @@ export default function EvaluationResultView({
                       </button>
 
                       <button
-                        onClick={() => onSupervise('internal')}
+                        onClick={() => lancerSupervision('internal')}
                         disabled={isSupervising}
                         className="flex items-center gap-1.5 px-4 py-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-all font-bold text-xs border border-indigo-200 rounded-xl shadow-sm hover:shadow active:scale-95 disabled:opacity-50 cursor-pointer"
                         title="Supervision avec une clé API dans l'application"
@@ -1096,6 +1212,7 @@ export default function EvaluationResultView({
                         {isSupervising ? <Loader2 className="w-4 h-4 animate-spin text-indigo-600" /> : <Brain className="w-4 h-4 text-indigo-600" />}
                         <span>{editableData._comparison ? 'Relancer 2e éval. (interne)' : '2e éval. (interne)'}</span>
                       </button>
+                      <Aide cle="c_deuxiemeEval" taille={16} />
                     </>
                   )}
                 </div>
@@ -1105,7 +1222,7 @@ export default function EvaluationResultView({
           {(editableData as any)._arbiterNotes && (
             <div className="no-print bg-violet-50 border border-violet-200 rounded-2xl p-5">
               <div className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-violet-500 mb-2">
-                <GitCompare className="w-4 h-4" /> 3e évaluation — comparaison des deux évaluations (note interne, non incluse dans le PDF)
+                <GitCompare className="w-4 h-4" /> 3e évaluation — comparaison des deux évaluations (note interne, non incluse dans le PDF) <Aide cle="c_voirDifferences" taille={14} />
               </div>
               <p className="text-sm text-slate-600 whitespace-pre-wrap leading-relaxed">{(editableData as any)._arbiterNotes}</p>
             </div>
@@ -1113,7 +1230,7 @@ export default function EvaluationResultView({
 
           <div className={"space-y-6"}>
               <div className={"flex items-center justify-between px-1"}>
-                  <h3 className={"text-2xl font-bold text-slate-800 flex items-center gap-3"}><FileText className={"w-6 h-6 text-blue-500"}/> Analyse et Surbrillance</h3>
+                  <h3 className={"text-2xl font-bold text-slate-800 flex items-center gap-3"}><FileText className={"w-6 h-6 text-blue-500"}/> Analyse et Surbrillance <Aide cle="c_motsSurlignes" taille={18} className="no-print" /></h3>
                   <div className="flex items-center gap-2">
                       <button
                         type="button"
@@ -1322,7 +1439,7 @@ export default function EvaluationResultView({
               )}
 
               <div className={"flex flex-wrap justify-between items-center gap-2 px-1"}>
-                <h3 className="text-2xl font-bold text-slate-800">
+                <h3 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
                   {editableData.examType === 'traduction' 
                     ? "Critères d'évaluation de la Traduction" 
                     : editableData.examType === 'composition'
@@ -1330,6 +1447,7 @@ export default function EvaluationResultView({
                         ? "Critères d'évaluation personnalisés (barème libre)" 
                         : `Critères d'évaluation — ${getCompositionTypeLabel(editableData.compositionType || 'essai')}`)
                     : "Performance Grille Officielle"}
+                  <Aide cle="c_noteCritere" taille={18} className="no-print" />
                 </h3>
                 {editableData.examType === 'composition' && (editableData as any).disableStandardGrid && (
                   <span className="text-xs font-semibold px-2.5 py-1 bg-amber-50 text-amber-800 rounded-lg border border-amber-200">
@@ -1366,6 +1484,7 @@ export default function EvaluationResultView({
                         isEditing={isEditing}
                         level={level}
                         gradingMode={gradingMode}
+                        afficherAide={idx === 0}
                         onScoreChange={(val) => handleScoreChange(crit.key, val)} 
                         onJustificationChange={(val) => handleJustificationChange(crit.key, val)}
                         onAdviceChange={(val) => handleAdviceChange(crit.key, val)}
@@ -1395,6 +1514,7 @@ export default function EvaluationResultView({
              {isGeneratingPdf ? <Loader2 className={"w-5 h-5 animate-spin"} /> : <Save className={"w-5 h-5"} />}
              Générer PDF
           </button>
+          <Aide cle="c_genererPdf" taille={18} />
           <button 
             onClick={handleExportMarkdown} 
             className={"w-full sm:w-auto px-8 py-4 bg-emerald-50 border-2 border-emerald-200 text-emerald-700 hover:bg-emerald-100 rounded-2xl font-bold tracking-wide transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-100/50 cursor-pointer"}
@@ -1403,10 +1523,12 @@ export default function EvaluationResultView({
              <FileDown className="w-5 h-5" />
              Exporter MD
           </button>
-          <button onClick={() => onSendFeedback(editableData)} className={"w-full sm:w-auto px-10 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-2xl font-bold tracking-wide transition-all flex items-center justify-center gap-2 shadow-xl shadow-blue-600/20 active:scale-[0.98] transform hover:scale-[1.02]"}>
+          <Aide cle="c_imprimerExporter" taille={18} />
+          <button onClick={() => { setSaveState('idle'); pendingSaveRef.current = false; onSendFeedback(editableData); }} className={"w-full sm:w-auto px-10 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-2xl font-bold tracking-wide transition-all flex items-center justify-center gap-2 shadow-xl shadow-blue-600/20 active:scale-[0.98] transform hover:scale-[1.02]"}>
              Valider et Envoyer l'E-mail
              <Send className={"w-5 h-5 ml-2"} />
           </button>
+          <Aide cle="c_validerEnvoyer" taille={18} />
         </div>
 
       </motion.div>
@@ -1446,7 +1568,7 @@ export default function EvaluationResultView({
                         {comparisonModalData.thirdEval && (
                           <th className="px-4 py-3 text-center border-l border-slate-200 text-violet-700">3e ÉVALUATION (ARBITRE) ({getFriendlyModelName(comparisonModalData.thirdProvider || 'Arbitre').toUpperCase()})</th>
                         )}
-                        <th className="px-4 py-3 text-center border-l border-slate-200 text-indigo-700">Note Finale retenue</th>
+                        <th className="px-4 py-3 text-center border-l border-slate-200 text-indigo-700"><span className="inline-flex items-center gap-1">Note Finale retenue <Aide cle="c_cmpNoteFinale" taille={13} /></span></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1460,11 +1582,10 @@ export default function EvaluationResultView({
                           if (avg < 4.0) return 3;
                           return 5;
                         };
-                        const finalVal = val3 !== undefined
-                          ? val3
-                          : (editableData.criteriaScores?.[crit.key] !== undefined
-                              ? editableData.criteriaScores[crit.key]
-                              : (val2 !== undefined ? val2 : val1));
+                        // La note retenue est celle du bilan affiché (retouches comprises).
+                        const finalVal = editableData.criteriaScores?.[crit.key] !== undefined
+                          ? editableData.criteriaScores[crit.key]
+                          : (val3 !== undefined ? val3 : (val2 !== undefined ? val2 : val1));
                         return (
                           <tr key={crit.key} className="border-b border-slate-100 last:border-0 bg-white">
                             <td className="px-4 py-3 font-bold text-slate-600">{crit.label}</td>

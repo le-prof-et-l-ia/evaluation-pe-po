@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server';
 import {
   searchWhitelistArticles,
   extractArticleContent,
+  findArticleForTheme,
+  MIN_ARTICLE_LENGTH,
+  NO_ARTICLE_FOUND_MESSAGE,
   generateTriggerSubject,
   MEDIA_WHITELIST
 } from '@/lib/subjectGeneratorService';
@@ -34,6 +37,9 @@ export async function POST(req: Request) {
       }
 
       const article = await extractArticleContent(url.trim(), mediaName);
+      if (!article.cleanText || article.cleanText.length < MIN_ARTICLE_LENGTH) {
+        return NextResponse.json({ error: "Le texte de cet article n'a pas pu être récupéré (site protégé ou page sans texte). Choisissez un autre article, ou collez son texte en mode manuel." }, { status: 422 });
+      }
       return NextResponse.json({
         success: true,
         article
@@ -51,22 +57,12 @@ export async function POST(req: Request) {
       let articleToUse = sourceArticle;
 
       if (!articleToUse || !articleToUse.cleanText) {
-        const candidates = await searchWhitelistArticles(theme.trim());
-        if (!candidates || candidates.length === 0) {
-          articleToUse = {
-            title: `Débat d'actualité : ${theme.trim()}`,
-            mediaName: 'Franceinfo',
-            publishedDate: new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date()),
-            cleanText: `Actualité récente et enjeux de société autour du thème : ${theme.trim()}. Confrontation des points de vue des usagers, des experts et des pouvoirs publics.`,
-            originalUrl: 'https://www.francetvinfo.fr'
-          };
-        } else {
-          const topCandidate = candidates[0];
-          articleToUse = await extractArticleContent(topCandidate.url, topCandidate.mediaName);
-          if (!articleToUse.cleanText || articleToUse.cleanText.length < 100) {
-            articleToUse.cleanText = topCandidate.snippet || `Débat d'actualité sur le sujet : ${theme.trim()}`;
-          }
+        // On n'invente jamais de source : faute d'article lisible, l'utilisateur est prévenu.
+        const found = await findArticleForTheme(theme.trim());
+        if (!found) {
+          return NextResponse.json({ error: NO_ARTICLE_FOUND_MESSAGE }, { status: 422 });
         }
+        articleToUse = found;
       }
 
       const result = await generateTriggerSubject({

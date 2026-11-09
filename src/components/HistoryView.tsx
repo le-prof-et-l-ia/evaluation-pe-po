@@ -1,5 +1,6 @@
 "use client";
 
+import Aide from "@/components/Aide";
 import { useState, useEffect } from "react";
 import { FileText, Trash2, Search, Calendar, Award, User, RefreshCw, ChevronRight, Download, Brain, AlertTriangle, Upload, Pencil, Check, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -198,8 +199,20 @@ export default function HistoryView({ onSelectRecord }: Props) {
       const itemsToSave = validRecords.map(r => ({
         ...r,
         subject: r.subject || 'Sujet',
-        level: r.level || 'B2'
+        // Pas de niveau inventé : s'il manque, il reste vide (« Non précisé »).
+        level: r.level || ''
       }));
+
+      // Un bilan importé qui porte le même identifiant qu'un bilan déjà présent le remplace.
+      const idsExistants = new Set(records.map(r => r.id));
+      const nbRemplaces = itemsToSave.filter((r: any) => r.id && idsExistants.has(r.id)).length;
+      if (nbRemplaces > 0) {
+        const ok = confirm(
+          `${nbRemplaces} bilan${nbRemplaces > 1 ? 's' : ''} du fichier existe${nbRemplaces > 1 ? 'nt' : ''} déjà dans l'historique ` +
+          `et ${nbRemplaces > 1 ? 'seront remplacés' : 'sera remplacé'} par la version importée (les modifications faites depuis seront perdues).\n\nContinuer l'import ?`
+        );
+        if (!ok) return;
+      }
 
       const res = await fetch("/api/history", {
         method: "POST",
@@ -271,6 +284,11 @@ export default function HistoryView({ onSelectRecord }: Props) {
     }
   };
 
+  const TYPES_EPREUVE: Record<string, string> = {
+    dictee: "Dictée", traduction: "Traduction", grammaire: "Grammaire", interpretation: "Interprétation", composition: "Composition",
+  };
+  const typesPresents = Object.keys(TYPES_EPREUVE).filter(t => records.some(r => r.examType === t));
+
   const filteredRecords = records.filter(r => {
     const recordType = r.type || 'pe';
     const matchType = filterType === 'ALL' || recordType === filterType;
@@ -279,7 +297,8 @@ export default function HistoryView({ onSelectRecord }: Props) {
       r.studentEmail.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (r.className && r.className.toLowerCase().includes(searchTerm.toLowerCase()));
     
-    const matchLevel = filterLevel === "ALL" || r.level === filterLevel;
+    const matchLevel = filterLevel === "ALL"
+      || (filterLevel.startsWith("type:") ? r.examType === filterLevel.slice(5) : r.level === filterLevel);
 
     return matchType && matchSearch && matchLevel;
   });
@@ -312,6 +331,7 @@ export default function HistoryView({ onSelectRecord }: Props) {
                 onChange={handleImportFiles}
               />
             </label>
+            <Aide cle="c_histImporter" taille={16} className="self-center" />
             {records.length > 0 && (
               <button 
                 onClick={handleDeleteAll} 
@@ -323,6 +343,7 @@ export default function HistoryView({ onSelectRecord }: Props) {
                 Tout supprimer
               </button>
             )}
+            {records.length > 0 && <Aide cle="c_histSupprimer" taille={16} className="self-center" />}
             <button 
               onClick={fetchHistory} 
               disabled={isLoading}
@@ -358,6 +379,7 @@ export default function HistoryView({ onSelectRecord }: Props) {
               {isSyncing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
               Synchroniser maintenant
             </button>
+            <Aide cle="c_histSync" taille={16} />
           </div>
         )}
 
@@ -422,7 +444,17 @@ export default function HistoryView({ onSelectRecord }: Props) {
                 >
                   DELF B2
                 </button>
+                {typesPresents.map(t => (
+                  <button
+                    key={t}
+                    onClick={() => setFilterLevel("type:" + t)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${filterLevel === "type:" + t ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-blue-700'}`}
+                  >
+                    {TYPES_EPREUVE[t]}
+                  </button>
+                ))}
               </div>
+              <Aide cle="c_histFiltres" taille={16} />
             </div>
           </div>
         </div>
@@ -448,7 +480,7 @@ export default function HistoryView({ onSelectRecord }: Props) {
                   <th className="px-6 py-4">Date de correction</th>
                   <th className="px-6 py-4 text-center">Niveau</th>
                   <th className="px-6 py-4 text-center">Score</th>
-                  <th className="px-6 py-4 text-right">Actions</th>
+                  <th className="px-6 py-4 text-right"><span className="inline-flex items-center gap-1.5 normal-case">Actions <Aide cle="c_histVoir" taille={14} /></span></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -555,7 +587,7 @@ export default function HistoryView({ onSelectRecord }: Props) {
                              record.examType === 'traduction' ? 'Traduction' :
                              record.examType === 'grammaire' ? 'Grammaire' :
                              record.examType === 'interpretation' ? 'Interprétation' :
-                             record.level}
+                             (record.level || 'Non précisé')}
                           </span>
                           <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${
                             (record.type || 'pe') === 'po' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-indigo-50 text-indigo-700 border border-indigo-200'

@@ -5,8 +5,9 @@ import path from 'path';
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { taskType, exchangeFolder, items, config } = body as {
+    const { taskType, exchangeFolder, items, config, examType } = body as {
       taskType: ExternalBatchTaskType;
+      examType?: string;
       exchangeFolder?: string;
       items: any[];
       config: any;
@@ -22,6 +23,7 @@ export async function POST(req: Request) {
       taskType,
       exchangeFolder: defaultFolder,
       items,
+      examType,
       config: config || { level: 'B2', language: 'FR', gradingMode: 'delf' }
     });
 

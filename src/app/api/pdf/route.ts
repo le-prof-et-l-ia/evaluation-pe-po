@@ -12,6 +12,10 @@ export async function POST(req: Request) {
     const data: EvaluationData = rawBody.result || rawBody;
     const level: string = rawBody.level || 'B2';
     const outputFolder: string | undefined = rawBody.outputFolder;
+    // Aperçu : le PDF est renvoyé au navigateur sans rien écrire dans le dossier de sortie.
+    const preview: boolean = rawBody.preview === true;
+    // Régénération d'un PDF déjà créé pour cette copie : on remplace ce fichier au lieu d'en créer un nouveau.
+    const replaceFileName: string = typeof rawBody.replaceFileName === 'string' ? rawBody.replaceFileName : '';
 
     console.log(`[PDF API] Generating PDF for ${data.studentName || data.studentEmail || 'Unknown'} - Level: ${level}`);
 
@@ -37,15 +41,21 @@ export async function POST(req: Request) {
     let fileName = `${baseName}.pdf`;
 
     // Sauvegarder localement de manière sécurisée (ne bloque pas le téléchargement en cas d'erreur de verrou disque)
-    try {
+    if (!preview) try {
       const outputDir = outputFolder && outputFolder.trim() !== ''
         ? path.resolve(outputFolder)
         : path.join(process.cwd(), 'data', 'outputs');
       if (!fs.existsSync(outputDir)) {
         fs.mkdirSync(outputDir, { recursive: true });
       }
-      // Ne jamais écraser un bilan existant (homonymes, relance d'une copie…).
-      const filePath = await uniqueFilePath(outputDir, baseName, '.pdf');
+      // Ne jamais écraser un bilan existant (homonymes…), sauf si l'appelant redemande
+      // explicitement le remplacement du PDF qu'il a lui-même créé pour cette copie.
+      const canReplace = replaceFileName !== ''
+        && replaceFileName === path.basename(replaceFileName)
+        && replaceFileName.toLowerCase().endsWith('.pdf');
+      const filePath = canReplace
+        ? path.join(outputDir, replaceFileName)
+        : await uniqueFilePath(outputDir, baseName, '.pdf');
       fs.writeFileSync(filePath, pdfBuffer);
       fileName = path.basename(filePath);
       console.log(`[PDF API] Local copy saved to: ${filePath}`);

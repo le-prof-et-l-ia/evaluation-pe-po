@@ -231,7 +231,7 @@ export function useCorrectionSettings(section: 'pe' | 'po' = 'pe') {
 
   /**
    * Changement de type d'épreuve : adapte automatiquement le niveau DELF sous-jacent
-   * tout en conservant la configuration des modèles.
+   * tout en conservant la configuration des modèles (le choix Léger / Lourd n'est pas écrasé).
    */
   const handleExamTypeChange = (newType: ExamType) => {
     setExamType(newType);
@@ -245,21 +245,16 @@ export function useCorrectionSettings(section: 'pe' | 'po' = 'pe') {
         setCustomMaxScore(20);
       }
     }
-    setEvalModel("flash");
-    setSupervisionProvider("gemini");
-    setSupervisionModel("flash");
+    // Le choix de modèle (Léger / Lourd) de l'utilisateur est conservé.
   };
 
   /**
-   * Changement de niveau : maintient Gemini Flash comme sélection par défaut
-   * pour tous les niveaux (B1, B2).
+   * Changement de niveau : ne modifie pas les modèles choisis par l'utilisateur.
    */
   const handleLevelChange = (newLevel: Level) => {
     setLevel(newLevel);
     setExamType(newLevel === "B1" ? "delf_b1" : "delf_b2");
-    setEvalModel("flash");
-    setSupervisionProvider("gemini");
-    setSupervisionModel("flash");
+    // Le choix de modèle (Léger / Lourd) de l'utilisateur est conservé.
   };
 
   return {

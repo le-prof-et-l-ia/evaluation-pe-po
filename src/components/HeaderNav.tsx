@@ -1,8 +1,9 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import Aide from "@/components/Aide";
 
 interface HeaderNavProps {
   currentSection?: "pe" | "po";
@@ -23,6 +24,29 @@ export default function HeaderNav({
 }: HeaderNavProps) {
   const pathname = usePathname();
   const activeSection = currentSection || (pathname?.startsWith("/po") ? "po" : "pe");
+  const [serveurOk, setServeurOk] = useState<boolean | null>(null);
+
+  // Vérifie régulièrement que le programme local répond (requête légère).
+  useEffect(() => {
+    let annule = false;
+    const verifier = async () => {
+      try {
+        const controller = new AbortController();
+        const minuteur = setTimeout(() => controller.abort(), 5000);
+        const res = await fetch("/api/classes", { cache: "no-store", signal: controller.signal });
+        clearTimeout(minuteur);
+        if (!annule) setServeurOk(res.ok);
+      } catch {
+        if (!annule) setServeurOk(false);
+      }
+    };
+    verifier();
+    const id = setInterval(verifier, 30000);
+    return () => {
+      annule = true;
+      clearInterval(id);
+    };
+  }, []);
 
   return (
     <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-slate-200/80 shadow-xs">
@@ -93,6 +117,7 @@ export default function HeaderNav({
                 )}
               </button>
             )}
+            {activeSection === "po" && onOpenPending && <Aide cle="c_brouillons" taille={14} />}
 
             {onOpenClasses && (
               <button
@@ -129,11 +154,22 @@ export default function HeaderNav({
                 <span className="hidden md:inline">Paramètres</span>
               </button>
             )}
+            {onOpenMaintenance && <Aide cle="c_parametresNav" taille={14} />}
 
             {/* Local Server status pill */}
             <div className="hidden lg:flex items-center gap-1.5 pl-2 ml-1 border-l border-slate-200 text-[11px] text-slate-500">
-              <span className="h-2 w-2 rounded-full bg-emerald-500"></span>
+              <span
+                className={`h-2 w-2 rounded-full ${serveurOk === false ? "bg-red-500" : serveurOk === null ? "bg-slate-300" : "bg-emerald-500"}`}
+                title={
+                  serveurOk === false
+                    ? "Le programme ne répond plus : relancez l'application."
+                    : serveurOk === null
+                      ? "Vérification du programme en cours…"
+                      : "Le programme répond normalement."
+                }
+              ></span>
               <span>127.0.0.1:3000</span>
+              <Aide cle="c_adresseLocale" taille={14} />
             </div>
           </div>
         </div>

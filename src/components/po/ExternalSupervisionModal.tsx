@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { X, Download, Copy, Check, Upload, Brain, AlertTriangle, FileJson } from "lucide-react";
+import Aide from "@/components/Aide";
 import { motion } from "framer-motion";
 import type { CorrectionResult } from "@/lib/po/geminiService";
 import {
@@ -205,6 +206,7 @@ export default function ExternalSupervisionModal({ mode = 'supervision', tasks, 
                 <h4 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
                   <Brain className="w-4 h-4 text-violet-600" />
                   Découpage en sous-lots ({chunks.length} sous-lot(s) de max {chunkSize})
+                  <Aide cle="sousLots" />
                 </h4>
                 <p className="text-xs text-slate-500 mt-1">
                   Recommandé : 5 copies max par lot pour respecter les limites de sortie token.

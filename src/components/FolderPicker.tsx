@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Aide from "@/components/Aide";
 import { Folder, FolderOpen, ChevronRight, ChevronUp, Check, X, Loader2, HardDrive, Star, Home } from "lucide-react";
 
 interface FolderPickerProps {
@@ -55,7 +56,7 @@ export default function FolderPicker({ currentPath, onSelect, onClose }: FolderP
         {/* Header */}
         <div className="flex justify-between items-center p-5 border-b border-slate-100">
           <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2">
-            <FolderOpen className="w-5 h-5 text-blue-500" /> Sélectionner un dossier
+            <FolderOpen className="w-5 h-5 text-blue-500" /> Sélectionner un dossier <Aide cle="c_raccourcisDossiers" taille={16} />
           </h3>
           <div className="flex items-center gap-2">
             <button onClick={() => browse("ROOT")} className="p-2 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-blue-600" title="Ce PC">
@@ -152,7 +153,7 @@ export default function FolderPicker({ currentPath, onSelect, onClose }: FolderP
                 {/* Files preview */}
                 {browseData.files.length > 0 && (
                   <div className="mt-4 pt-4 border-t border-slate-100">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-3 mb-2">{browseData.files.length} fichier(s) traitable(s)</p>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-3 mb-2 flex items-center gap-1">{browseData.files.length} fichier(s) traitable(s) <Aide cle="c_fichiersTraitables" taille={13} /></p>
                     <div className="flex flex-wrap gap-1 px-3">
                       {browseData.files.slice(0, 10).map(f => (
                         <span key={f} className="text-xs bg-slate-100 text-slate-500 px-2 py-1 rounded-md truncate max-w-[150px]">{f}</span>
@@ -169,7 +170,7 @@ export default function FolderPicker({ currentPath, onSelect, onClose }: FolderP
         {/* Footer: Select Button */}
         <div className="p-4 border-t border-slate-100 flex justify-between items-center">
           <span className="text-xs text-slate-400 truncate max-w-[300px]">{browseData?.isRoot ? 'Choisissez un lecteur ou un favori' : browseData?.currentPath}</span>
-          <div className="flex gap-3">
+          <div className="flex gap-3 items-center">
             <button onClick={onClose} className="px-4 py-2.5 text-sm text-slate-500 hover:text-slate-700 font-medium">Annuler</button>
             <button
               onClick={() => { if (browseData && !browseData.isRoot) onSelect(browseData.currentPath); }}
@@ -178,6 +179,7 @@ export default function FolderPicker({ currentPath, onSelect, onClose }: FolderP
             >
               <Check className="w-4 h-4" /> Sélectionner ce dossier
             </button>
+            <Aide cle="c_selectionnerDossier" taille={16} />
           </div>
         </div>
       </div>

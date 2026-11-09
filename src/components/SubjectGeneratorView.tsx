@@ -36,8 +36,10 @@ import {
   CeQuestion,
   QuestionType,
   MEDIA_WHITELIST,
+  MAX_SOURCE_CHARS,
   countFrenchWords
 } from "@/lib/subjectGeneratorService";
+import Aide from "@/components/Aide";
 import { type KeyConfig } from "@/lib/retryUtils";
 
 interface SubjectGeneratorViewProps {
@@ -55,6 +57,15 @@ const THEME_SUGGESTIONS = [
   "Le droit à la déconnexion et la surcharge mentale",
   "La piétonnisation intégrale des centres-villes"
 ];
+
+/** Nom lisible d'un site à partir de son adresse (ex. « lemonde.fr »). */
+function mediaNameFromUrl(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "Source fournie par l'enseignant";
+  }
+}
 
 export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: SubjectGeneratorViewProps) {
   // ── Form State ─────────────────────────────────────────────────────────────
@@ -170,10 +181,10 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
       if (searchMode === "MANUAL" && manualText.trim()) {
         sourceArticleData = {
           title: `Document source : ${theme.trim()}`,
-          mediaName: "Presse francophone",
+          mediaName: manualUrl.trim() ? mediaNameFromUrl(manualUrl.trim()) : "Texte fourni par l'enseignant",
           publishedDate: new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "long", year: "numeric" }).format(new Date()),
           cleanText: manualText.trim(),
-          originalUrl: manualUrl.trim() || "https://francetvinfo.fr"
+          originalUrl: manualUrl.trim()
         };
       }
       // Étape 2 : Si un candidat spécifique est choisi
@@ -189,9 +200,8 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
           })
         });
         const extData = await extRes.json();
-        if (extRes.ok && extData.article) {
-          sourceArticleData = extData.article;
-        }
+        if (!extRes.ok || !extData.article) throw new Error(extData.error || "Le texte de cet article n'a pas pu être récupéré.");
+        sourceArticleData = extData.article;
       }
       // Étape 3 : Si mode Manuel avec URL seulement
       else if (searchMode === "MANUAL" && manualUrl.trim()) {
@@ -202,9 +212,8 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
           body: JSON.stringify({ action: "extract", url: manualUrl.trim() })
         });
         const extData = await extRes.json();
-        if (extRes.ok && extData.article) {
-          sourceArticleData = extData.article;
-        }
+        if (!extRes.ok || !extData.article) throw new Error(extData.error || "Le texte de cet article n'a pas pu être récupéré.");
+        sourceArticleData = extData.article;
       }
 
       const effectiveTargetCount = useCustomRange ? Math.round((minWords + maxWords) / 2) : targetWordCount;
@@ -338,12 +347,13 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
     notifyCopy("Corrigé officiel et barème copiés !");
   };
 
-  const handleDownloadSubject = () => {
+  /** `avecCorrige` : false = épreuve à donner aux élèves (sans corrigé) ; true = version enseignant avec corrigé et barème. */
+  const handleDownloadSubject = (avecCorrige: boolean = true) => {
     if (!result) return;
     let content = `# Épreuve FLE (${result.level}) : ${result.theme}\n\n`;
     content += `**Niveau CECRL :** ${result.level}\n`;
     content += `**Date de génération :** ${new Date().toLocaleDateString("fr-FR")}\n`;
-    content += `**Source d'origine :** ${result.sourceArticle.mediaName} - [Consulter l'article original](${result.sourceArticle.url})\n\n`;
+    content += `**Source d'origine :** ${result.sourceArticle.mediaName}${result.sourceArticle.url ? ` - [Consulter l'article original](${result.sourceArticle.url})` : ""}\n\n`;
 
     if (result.ceExam) {
       const ce = result.ceExam;
@@ -370,6 +380,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
         }
       });
 
+      if (avecCorrige) {
       content += `---\n\n`;
       content += `## PARTIE 3 : CORRIGÉ OFFICIEL & BARÈME D'ÉVALUATION\n\n`;
       ce.questions.forEach((q, idx) => {
@@ -388,6 +399,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
         }
         content += `\n`;
       });
+      }
     } else {
       result.documents.forEach((doc, idx) => {
         if (result.documents.length > 1) {
@@ -404,7 +416,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    const prefix = result.ceExam ? "Epreuve_CE" : "Sujet_PE";
+    const prefix = result.ceExam ? (avecCorrige ? "Corrige_CE_enseignant" : "Epreuve_CE_eleves") : "Sujet_PE";
     a.download = `${prefix}_${result.level}_${result.theme.slice(0, 25).replace(/[^a-z0-9]/gi, "_")}.md`;
     a.click();
     URL.revokeObjectURL(url);
@@ -450,6 +462,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
         >
           <Globe className="w-3.5 h-3.5 text-blue-600" />
           <span>{MEDIA_WHITELIST.length} diffuseurs TV, Radio & Presse (sans paywall)</span>
+          <Aide cle="c_genDiffuseurs" taille={14} />
         </div>
       </div>
 
@@ -499,7 +512,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
 
             {/* 2. Niveau CECRL */}
             <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-700 block">Niveau CECRL visé</label>
+              <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">Niveau CECRL visé <Aide cle="c_genNiveau" taille={14} /></label>
               <div className="grid grid-cols-3 gap-2 p-1 bg-slate-100/70 rounded-2xl border border-slate-200/60">
                 {(["B1", "B2", "C1"] as const).map(lvl => (
                   <button
@@ -533,7 +546,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
                   className="space-y-2 bg-indigo-50/50 p-4 rounded-2xl border border-indigo-100 overflow-hidden"
                 >
                   <label className="text-xs font-bold text-indigo-900 flex items-center justify-between">
-                    <span>Nombre d'articles à générer (Dossier C1)</span>
+                    <span className="flex items-center gap-1.5">Nombre d'articles à générer (Dossier C1) <Aide cle="c_genNbArticles" taille={14} /></span>
                     <span className="text-[10px] font-black uppercase bg-indigo-200/70 text-indigo-900 px-2 py-0.5 rounded-md">
                       Contradictoire
                     </span>
@@ -566,7 +579,10 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
             {/* 4. Longueur cible en mots & Intervalle */}
             <div className="space-y-3">
               <div className="flex justify-between items-center">
+                <div className="flex items-center gap-1.5">
                 <label className="text-xs font-bold text-slate-700">Longueur cible en mots {level === "C1" && articleCount > 1 && !generateCe ? "(par article)" : ""}</label>
+                <Aide cle="c_genLongueur" taille={14} />
+                </div>
                 <span className="text-[11px] font-semibold text-slate-500">
                   {useCustomRange ? (
                     <>Intervalle : <span className="text-indigo-600 font-bold">{minWords} à {maxWords} mots</span></>
@@ -648,7 +664,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
 
             {/* 5. Mode de recherche */}
             <div className="space-y-3 pt-2 border-t border-slate-100">
-              <label className="text-xs font-bold text-slate-700 block">Mode de recherche de l'article source</label>
+              <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">Mode de recherche de l'article source <Aide cle="c_genMode" taille={14} /></label>
               <div className="grid grid-cols-3 gap-1.5 p-1 bg-slate-100/70 rounded-2xl border border-slate-200/60 text-xs">
                 <button
                   type="button"
@@ -682,7 +698,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
               {searchMode === "MANUAL" && (
                 <div className="space-y-3 p-3 bg-slate-50 rounded-2xl border border-slate-200/80">
                   <div>
-                    <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">URL de l'article source</label>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1.5 mb-1">URL de l'article source <Aide cle="c_genSource" taille={13} /></label>
                     <input
                       type="url"
                       value={manualUrl}
@@ -700,6 +716,11 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
                       placeholder="Collez ici le texte brut de l'article..."
                       className="w-full bg-white border border-slate-200 rounded-xl p-2 text-xs outline-none resize-y"
                     />
+                    {manualText.trim().length > MAX_SOURCE_CHARS && (
+                      <p className="mt-1 text-[11px] text-amber-700 font-semibold">
+                        Texte trop long ({manualText.trim().length.toLocaleString("fr-FR")} caractères) : seuls les {MAX_SOURCE_CHARS.toLocaleString("fr-FR")} premiers caractères seront transmis à l'IA. Raccourcissez-le ou gardez le passage utile.
+                      </p>
+                    )}
                   </div>
                 </div>
               )}
@@ -719,6 +740,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
                     <BookOpen className="w-4 h-4 text-indigo-600" />
                     Créer une épreuve de Compréhension Écrite (CE)
                   </span>
+                  <Aide cle="c_genCe" taille={14} />
                 </label>
                 {generateCe && (
                   <span className="text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-md">
@@ -737,7 +759,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
                   >
                     {/* Sélecteur Article original / Article adapté */}
                     <div className="space-y-1.5">
-                      <label className="text-[11px] font-bold text-indigo-950 block">Texte support du questionnaire</label>
+                      <label className="text-[11px] font-bold text-indigo-950 flex items-center gap-1.5">Texte support du questionnaire <Aide cle="c_genTexteSupport" taille={13} /></label>
                       <div className="grid grid-cols-2 gap-2">
                         <button
                           type="button"
@@ -800,7 +822,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
 
                     {/* Types de questions (cases à cocher multiples) */}
                     <div className="space-y-2">
-                      <label className="text-[11px] font-bold text-indigo-950 block">Types de questions (au moins 1 requis)</label>
+                      <label className="text-[11px] font-bold text-indigo-950 flex items-center gap-1.5">Types de questions (au moins 1 requis) <Aide cle="c_genQuestions" taille={13} /></label>
                       <div className="space-y-1.5">
                         {[
                           { id: "qcm" as QuestionType, label: "QCM", desc: "Choix multiples (3 options) avec 1 bonne réponse" },
@@ -853,7 +875,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
                   className="w-full py-3.5 px-4 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                 >
                   {isSearching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                  <span>{isSearching ? "Recherche en cours..." : "Rechercher parmi les 15 médias"}</span>
+                  <span>{isSearching ? "Recherche en cours..." : `Rechercher parmi les ${MEDIA_WHITELIST.length} médias`}</span>
                 </button>
               ) : (
                 <button
@@ -877,7 +899,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
             )}
           </div>
 
-          {/* Liste des 15 médias pris en charge */}
+          {/* Liste des médias pris en charge */}
           <div className="bg-slate-50 border border-slate-200/70 rounded-2xl p-4">
             <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2 flex items-center gap-1.5">
               <Globe className="w-3.5 h-3.5 text-blue-500" /> {MEDIA_WHITELIST.length} Diffuseurs Francophones interrogés
@@ -892,6 +914,9 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
                 </span>
               ))}
             </div>
+            <p className="mt-3 text-[11px] text-slate-500 leading-snug">
+              La recherche d'articles interroge DuckDuckGo et Google Actualités ; le texte est extrait via le service r.jina.ai.
+            </p>
           </div>
         </div>
 
@@ -933,6 +958,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
                           {cand.title}
                         </h4>
                       </div>
+                      <div className="flex items-center gap-1 shrink-0">
                       <button
                         type="button"
                         onClick={() => handleGenerate(cand)}
@@ -941,6 +967,8 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
                         <span>Choisir</span>
                         <ChevronRight className="w-3.5 h-3.5" />
                       </button>
+                      <Aide cle="c_genChoisir" taille={14} />
+                      </div>
                     </div>
 
                     {cand.snippet && (
@@ -1030,6 +1058,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
                     <Layers className="w-3.5 h-3.5" />
                     <span>Vue Intégrale</span>
                   </button>
+                  <Aide cle="c_genVues" taille={16} className="mx-1" />
                 </div>
               )}
 
@@ -1318,15 +1347,39 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
                     </button>
                   )}
 
-                  <button
-                    type="button"
-                    onClick={handleDownloadSubject}
-                    className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
-                    title="Télécharger l'épreuve complète au format Markdown"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    <span>Télécharger (.md)</span>
-                  </button>
+                  {result.ceExam ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadSubject(false)}
+                        className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                        title="Télécharger l'épreuve pour les élèves (texte et questions, sans corrigé) au format Markdown"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Épreuve (élèves)</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadSubject(true)}
+                        className="px-4 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                        title="Télécharger la version enseignant : épreuve, corrigé et barème, au format Markdown"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Corrigé (enseignant)</span>
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadSubject(true)}
+                      className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                      title="Télécharger le sujet au format Markdown"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Télécharger (.md)</span>
+                    </button>
+                  )}
+                  <Aide cle="c_genTelecharger" taille={16} />
 
                   <button
                     type="button"
@@ -1337,9 +1390,11 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
                     <Printer className="w-3.5 h-3.5" />
                     <span>Imprimer</span>
                   </button>
+                  <Aide cle="c_genCopierImprimer" taille={16} />
                 </div>
 
                 {onUseAsSubject && (
+                  <div className="flex items-center gap-1.5">
                   <button
                     type="button"
                     onClick={handleTransferToCorrection}
@@ -1348,6 +1403,8 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
                     <span>Utiliser comme sujet de correction</span>
                     <ArrowRight className="w-4 h-4" />
                   </button>
+                  <Aide cle="c_genUtiliserSujet" taille={16} />
+                  </div>
                 )}
               </div>
             </motion.div>

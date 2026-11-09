@@ -4,6 +4,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { GitCompare, FileText, Zap } from "lucide-react";
 import { formatScore } from "@/lib/scoreUtils";
 import { getFriendlyModelName } from "@/lib/modelNames";
+import { getCriteriaConfig } from "@/lib/promptUtils";
+import Aide from "@/components/Aide";
 
 interface ComparisonModalProps {
   /** Données de comparaison, ou `null` quand la modale est fermée. */
@@ -13,6 +15,12 @@ interface ComparisonModalProps {
   level: string;
   /** Barème appliqué : influe sur l'affichage des notes. */
   gradingMode: "detailed" | "delf";
+  /**
+   * Bilan tel qu'il est affiché dans le rapport (notes retouchées comprises).
+   * S'il est fourni, la « Note finale retenue » est celle du bilan ; sinon on
+   * prend la dernière évaluation disponible (3e, sinon 2e, sinon 1re).
+   */
+  finalData?: { globalScore?: number; criteriaScores?: Record<string, number> } | null;
 }
 
 /**
@@ -27,7 +35,19 @@ export default function ComparisonModal({
   setComparisonModalData,
   level,
   gradingMode,
+  finalData,
 }: ComparisonModalProps) {
+  // Critères et barèmes réels de la grille (et non des valeurs codées en dur).
+  const criteria = getCriteriaConfig(level);
+  const maxGlobal: number =
+    Number(comparisonModalData?.firstEval?.maxScore) ||
+    criteria.reduce((somme, c) => somme + c.maxScore, 0);
+  const noteFinaleGlobale = (): number | undefined =>
+    finalData?.globalScore ??
+    comparisonModalData?.thirdEval?.globalScore ??
+    comparisonModalData?.secondEval?.globalScore ??
+    comparisonModalData?.firstEval?.globalScore;
+
   return (
     <AnimatePresence>
       {comparisonModalData && (
@@ -45,6 +65,7 @@ export default function ComparisonModal({
               <h3 className="text-2xl font-black text-slate-800 flex items-center gap-3">
                 <GitCompare className="w-7 h-7 text-fuchsia-600" />
                 Analyse de la Double évaluation
+                <Aide cle="c_cmpColonnes" taille={18} />
               </h3>
               <button onClick={() => setComparisonModalData(null)} className="p-2 border-2 border-slate-200 rounded-full text-slate-500 hover:text-slate-800 hover:bg-slate-50 transition-all font-bold">
                 ✕
@@ -52,6 +73,9 @@ export default function ComparisonModal({
             </div>
             
             <div className="overflow-y-auto pr-2 custom-scrollbar flex-1 space-y-6">
+              <p className="text-xs text-slate-500">
+                Barème appliqué : {gradingMode === "delf" ? "DELF officiel (notes 0, 1, 3 ou 5 par critère)" : "détaillé (au demi-point)"}, total sur {maxGlobal} points.
+              </p>
               {/* TABLEAU DES NOTES */}
               <div className="bg-slate-50 rounded-2xl border border-slate-200 overflow-hidden">
                 <table className="w-full text-sm text-left">
@@ -60,27 +84,29 @@ export default function ComparisonModal({
                       <th className="px-4 py-3">Critère</th>
                       <th className="px-4 py-3 text-center border-l border-slate-200 text-blue-700">Modèle INITIAL ({getFriendlyModelName(comparisonModalData.firstProvider).toUpperCase()})</th>
                       <th className="px-4 py-3 text-center border-l border-slate-200 text-purple-700">DOUBLE ÉVALUATION ({getFriendlyModelName(comparisonModalData.secondProvider).toUpperCase()})</th>
-                      <th className="px-4 py-3 text-center border-l border-slate-200 text-indigo-700">Note Finale retenue</th>
+                      <th className="px-4 py-3 text-center border-l border-slate-200 text-indigo-700"><span className="inline-flex items-center gap-1">Note Finale retenue <Aide cle="c_cmpNoteFinale" taille={13} /></span></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {['realisation', 'coherence', 'sociolinguistique', 'lexique', 'morphosyntaxe'].map((crit) => {
-                      const val1 = comparisonModalData.firstEval.criteriaScores[crit];
-                      const val2 = comparisonModalData.secondEval.criteriaScores[crit];
-                      const finalVal = val2 !== undefined ? val2 : val1;
+                    {criteria.map((c) => {
+                      const crit = c.key;
+                      const val1 = comparisonModalData.firstEval.criteriaScores?.[crit];
+                      const val2 = comparisonModalData.secondEval.criteriaScores?.[crit];
+                      const finalVal = finalData?.criteriaScores?.[crit] ?? comparisonModalData.thirdEval?.criteriaScores?.[crit] ?? val2 ?? val1;
+                      const max = formatScore(c.maxScore);
                       return (
                         <tr key={crit} className="border-b border-slate-100 last:border-0 bg-white">
-                          <td className="px-4 py-3 font-bold text-slate-600 capitalize">{crit}</td>
-                          <td className="px-4 py-3 text-center border-l border-slate-100 text-slate-500">{val1}/5</td>
+                          <td className="px-4 py-3 font-bold text-slate-600">{c.label}</td>
+                          <td className="px-4 py-3 text-center border-l border-slate-100 text-slate-500">{formatScore(val1)}/{max}</td>
                           <td className="px-4 py-3 text-center border-l border-slate-100 border-r text-slate-500 font-medium">
-                            {val2}/5
-                            {val1 !== val2 && (
+                            {formatScore(val2)}/{max}
+                            {val1 !== undefined && val2 !== undefined && val1 !== val2 && (
                               <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded-md font-bold ${val2 > val1 ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
-                                {val2 > val1 ? "+" : ""}{(val2 - val1)}
+                                {val2 > val1 ? "+" : ""}{formatScore(val2 - val1)}
                               </span>
                             )}
                           </td>
-                          <td className="px-4 py-3 text-center font-black text-slate-800 bg-slate-50">{finalVal}/5</td>
+                          <td className="px-4 py-3 text-center font-black text-slate-800 bg-slate-50">{formatScore(finalVal)}/{max}</td>
                         </tr>
                       );
                     })}
@@ -88,10 +114,10 @@ export default function ComparisonModal({
                   <tfoot className="bg-slate-100 font-black">
                     <tr>
                       <td className="px-4 py-3 uppercase text-xs text-slate-500">Note Finale Retenue</td>
-                      <td className="px-4 py-3 text-center border-l border-slate-200 text-slate-500">{formatScore(comparisonModalData.firstEval.globalScore)}/25</td>
-                      <td className="px-4 py-3 text-center border-l border-slate-200 text-slate-500">{formatScore(comparisonModalData.secondEval.globalScore)}/25</td>
+                      <td className="px-4 py-3 text-center border-l border-slate-200 text-slate-500">{formatScore(comparisonModalData.firstEval.globalScore)}/{maxGlobal}</td>
+                      <td className="px-4 py-3 text-center border-l border-slate-200 text-slate-500">{formatScore(comparisonModalData.secondEval.globalScore)}/{maxGlobal}</td>
                       <td className="px-4 py-3 text-center border-l border-slate-200 text-slate-800 text-lg">
-                        {formatScore(comparisonModalData.secondEval.globalScore ?? comparisonModalData.firstEval.globalScore)}/25
+                        {formatScore(noteFinaleGlobale())}/{maxGlobal}
                       </td>
                     </tr>
                   </tfoot>
@@ -100,21 +126,22 @@ export default function ComparisonModal({
 
               {/* SEVERAL CHANGES IN FEEDBACK */}
               <h4 className="text-sm font-black text-slate-700 uppercase tracking-wider mb-2 mt-8 flex items-center gap-2">
-                 <FileText className="w-4 h-4 text-slate-400"/> Feedbacks modifiés
+                 <FileText className="w-4 h-4 text-slate-400"/> Feedbacks modifiés <Aide cle="c_cmpFeedbacks" taille={14} />
               </h4>
               <div className="space-y-4">
-                {['realisation', 'coherence', 'sociolinguistique', 'lexique', 'morphosyntaxe'].map((crit) => {
-                   const justif1 = comparisonModalData.firstEval.justifications[crit];
-                   const justif2 = comparisonModalData.secondEval.justifications[crit];
-                   const adv1 = comparisonModalData.firstEval.advices[crit];
-                   const adv2 = comparisonModalData.secondEval.advices[crit];
+                {criteria.map((c) => {
+                   const crit = c.key;
+                   const justif1 = comparisonModalData.firstEval.justifications?.[crit];
+                   const justif2 = comparisonModalData.secondEval.justifications?.[crit];
+                   const adv1 = comparisonModalData.firstEval.advices?.[crit];
+                   const adv2 = comparisonModalData.secondEval.advices?.[crit];
                    const changed = (justif1 !== justif2) || (adv1 !== adv2);
                    if (!changed) return null;
                    
                    return (
                      <div key={"feedback-"+crit} className="border border-slate-200 rounded-xl overflow-hidden shadow-sm">
                        <div className="bg-slate-100 px-4 py-2 font-bold text-xs text-slate-500 uppercase tracking-wider border-b border-slate-200">
-                         Critère: {crit}
+                         Critère : {c.label}
                        </div>
                        <div className="grid grid-cols-2 divide-x divide-slate-100">
                          <div className="p-4 bg-slate-50">
@@ -135,7 +162,7 @@ export default function ComparisonModal({
 
               {/* NOUVELLES ERREURS REPEREES */}
               <h4 className="text-sm font-black text-slate-700 uppercase tracking-wider mb-2 mt-8 flex items-center gap-2">
-                 <Zap className="w-4 h-4 text-amber-500"/> Fautes non repérées dans l'évaluation initiale
+                 <Zap className="w-4 h-4 text-amber-500"/> Fautes non repérées dans l'évaluation initiale <Aide cle="c_cmpFautes" taille={14} />
               </h4>
               <div className="bg-white border text-sm border-slate-200 rounded-2xl overflow-hidden">
                 <table className="w-full text-left">

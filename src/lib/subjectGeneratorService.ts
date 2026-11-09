@@ -7,6 +7,9 @@ export interface WhitelistMedia {
   siteQuery: string;
 }
 
+/** Longueur maximale (en caractères) du texte source transmis à l'IA. */
+export const MAX_SOURCE_CHARS = 15000;
+
 export const MEDIA_WHITELIST: WhitelistMedia[] = [
   { domain: 'francetvinfo.fr', name: 'Franceinfo', siteQuery: 'site:francetvinfo.fr' },
   { domain: 'france24.com', name: 'France 24', siteQuery: 'site:france24.com' },
@@ -145,8 +148,10 @@ export function getMediaNameFromUrl(url: string): string {
         return media.name;
       }
     }
+    // Site hors liste : on affiche son vrai nom de domaine plutôt qu'une source générique.
+    return host.replace(/^www\./, '');
   } catch {}
-  return 'Presse francophone';
+  return 'Source non identifiée';
 }
 
 /**
@@ -288,6 +293,27 @@ export async function searchWhitelistArticles(theme: string): Promise<CandidateA
 /**
  * Extraction épurée du contenu d'un article via Jina Reader (ou fallback textuel).
  */
+/** Longueur minimale (en caractères) d'un texte d'article réellement exploitable. */
+export const MIN_ARTICLE_LENGTH = 400;
+
+export const NO_ARTICLE_FOUND_MESSAGE =
+  "Aucun article récent et lisible n'a été trouvé pour ce thème. Reformulez le thème (mots plus courants), " +
+  "ou passez en mode manuel pour coller vous-même le texte d'un article.";
+
+/**
+ * Cherche un article sur le thème et renvoie le premier dont le texte a pu être
+ * réellement extrait (jusqu'à `maxTries` essais). Renvoie `null` si aucun ne
+ * convient : l'appelant doit alors prévenir l'utilisateur, jamais inventer une source.
+ */
+export async function findArticleForTheme(theme: string, maxTries = 3): Promise<ExtractedArticle | null> {
+  const candidates = await searchWhitelistArticles(theme);
+  for (const candidate of (candidates || []).slice(0, maxTries)) {
+    const article = await extractArticleContent(candidate.url, candidate.mediaName);
+    if (article.cleanText && article.cleanText.length >= MIN_ARTICLE_LENGTH) return article;
+  }
+  return null;
+}
+
 export async function extractArticleContent(url: string, defaultMediaName?: string): Promise<ExtractedArticle> {
   const mediaName = defaultMediaName || getMediaNameFromUrl(url);
   let title = '';
@@ -521,7 +547,7 @@ export async function generateTriggerSubject(params: {
 - Date d'origine : ${sourceArticle.publishedDate}
 - Titre d'origine : ${sourceArticle.title}
 - Extrait / texte source :
-${sourceArticle.cleanText.slice(0, 4000)}
+${sourceArticle.cleanText.slice(0, MAX_SOURCE_CHARS)}
 
 Générez maintenant ${articleCount} article(s) déclencheur(s) au format JSON demandé.`;
 
@@ -713,7 +739,7 @@ Titre : ${articleTitle}
 Source : ${articleSource}
 Texte :
 """
-${articleText.slice(0, 4500)}
+${articleText.slice(0, MAX_SOURCE_CHARS)}
 """
 
 Directives didactiques CECRL (${level}) :

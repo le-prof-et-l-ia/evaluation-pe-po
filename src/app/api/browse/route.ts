@@ -68,7 +68,7 @@ export async function POST(req: Request) {
       .sort((a, b) => a.name.localeCompare(b.name));
 
     const files = entries
-      .filter(e => e.isFile() && /\.(pdf|jpg|jpeg|png|txt)$/i.test(e.name))
+      .filter(e => e.isFile() && /\.(pdf|jpg|jpeg|png|txt|mp3|wav|m4a|ogg|webm|aac|flac|caf)$/i.test(e.name))
       .map(e => e.name);
 
     // Déterminer le parent (remonter à "Ce PC" si on est à la racine d'un lecteur)

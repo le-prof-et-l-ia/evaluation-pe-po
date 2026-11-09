@@ -7,6 +7,10 @@ import path from 'path';
 // @ts-expect-error NodeMailer lacks full types here without @types/nodemailer
 import nodemailer from 'nodemailer';
 
+// Formats de copie lus par le lot (PDF, images, texte).
+const COPY_EXTENSIONS = ['.pdf', '.jpg', '.jpeg', '.png', '.txt'];
+const isCopyFile = (f: string) => COPY_EXTENSIONS.includes(path.extname(f).toLowerCase());
+
 export async function POST(req: Request) {
   try {
     const {
@@ -29,6 +33,8 @@ export async function POST(req: Request) {
       nativeLanguage,
       examType = 'delf_b2',
       customConfig,
+      emailSubject,
+      emailBody,
     } = await req.json();
     
     if (!folderPath) {
@@ -39,15 +45,19 @@ export async function POST(req: Request) {
     const outputDir = outputFolderPath || path.join(process.cwd(), 'data/outputs');
     if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 
-    const files = fs.readdirSync(inputDir)
+    const allFiles = fs.readdirSync(inputDir)
       .filter(f => !f.startsWith('.'))
       .map(f => { const fullPath = path.join(inputDir, f); const stat = fs.statSync(fullPath); return { name: f, st: stat }; })
       .filter(item => !item.st.isDirectory())
       .sort((a, b) => a.st.mtimeMs - b.st.mtimeMs)
       .map(item => item.name);
+    // Seules les copies (PDF, images, texte) sont lues : un .docx ou un Thumbs.db partirait sinon à l'IA.
+    const files = allFiles.filter(isCopyFile);
+    const ignoredFiles = allFiles.filter(f => !isCopyFile(f));
 
     if (files.length === 0) {
-      return new Response(JSON.stringify({ error: "Aucun fichier trouvé dans le dossier source." }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+      const detail = ignoredFiles.length > 0 ? ` ${ignoredFiles.length} fichier(s) ignoré(s), car ce ne sont pas des copies (${COPY_EXTENSIONS.join(', ')}).` : "";
+      return new Response(JSON.stringify({ error: "Aucune copie trouvée dans le dossier source." + detail }), { status: 400, headers: { 'Content-Type': 'application/json' } });
     }
 
     // Transporteur e-mail : l'option « Envoi direct » de l'interface était
@@ -62,13 +72,16 @@ export async function POST(req: Request) {
 
 
     const { searchParams } = new URL(req.url);
-    const useDoubleEval = searchParams.get('useDoubleEval') === 'true';
+    // La double évaluation (supervision) suit la grille DELF : on ne l'applique jamais à une dictée,
+    // une traduction, des exercices de grammaire ou une composition (le résultat serait remplacé par un rapport DELF).
+    const isCustomExamType = ['dictee', 'traduction', 'grammaire', 'composition'].includes(examType);
+    const useDoubleEval = searchParams.get('useDoubleEval') === 'true' && !isCustomExamType;
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
         const send = (data: any) => { controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`)); };
         const batchMode = ocrOnly ? 'ocr' : (useDoubleEval && supervisionProvider && supervisionModel) ? 'ocr+eval+jury' : 'ocr+eval';
-        send({ type: 'start', totalFiles: files.length });
+        send({ type: 'start', totalFiles: files.length, ignoredFiles });
         const results: any[] = [];
         let lastKey = '';
 
@@ -259,8 +272,9 @@ export async function POST(req: Request) {
                   await transporter.sendMail({
                     from: `"Évaluation DELF" <${emailUser}>`,
                     to: recipient,
-                    subject: `Votre bilan de production écrite DELF ${level || 'B2'}`,
-                    text: `Bonjour,\n\nVoici la correction de votre production écrite.\n\nBien cordialement,\n\n${emailSignature}`,
+                    // Modèle d'e-mail des réglages, comme l'envoi manuel ; texte par défaut s'il est vide.
+                    subject: (typeof emailSubject === 'string' && emailSubject.trim()) ? emailSubject : `Votre bilan de production écrite DELF ${level || 'B2'}`,
+                    text: (typeof emailBody === 'string' && emailBody.trim()) ? emailBody : `Bonjour,\n\nVoici la correction de votre production écrite.\n\nBien cordialement,\n\n${emailSignature}`,
                     attachments: [{ filename: path.basename(pdfPath), content: pdfBuffer }],
                   });
                   emailSent = true;
@@ -327,7 +341,7 @@ export async function GET(req: Request) {
           return false;
         }
       });
-    return Response.json({ files });
+    return Response.json({ files: files.filter(isCopyFile), ignored: files.filter(f => !isCopyFile(f)) });
   } catch (err: any) {
     return Response.json({ error: err.message }, { status: 500 });
   }

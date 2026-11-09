@@ -120,7 +120,7 @@ function processRecord(body: any, existingHistory: EvaluationRecord[]): { record
     classId: body.classId !== undefined ? body.classId : (existing?.classId || null),
     className: body.className !== undefined ? body.className : (existing?.className || null),
     date: body.date || existing?.date || new Date().toISOString(),
-    level: body.level || existing?.level || "B2",
+    level: body.level || existing?.level || "",
     type,
     globalScore,
     criteriaScores: body.criteriaScores || existing?.criteriaScores || {}

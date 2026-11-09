@@ -32,7 +32,7 @@ export async function POST(req: Request) {
     const filePath = path.join(inputDir, file);
     
     if (!fs.existsSync(filePath)) {
-      return new Response(JSON.stringify({ error: "Fichier introuvable" }), { status: 404, headers: { 'Content-Type': 'application/json' } });
+      return new Response(JSON.stringify({ error: "Le fichier « " + file + " » est introuvable dans le dossier source actuel (" + inputDir + "). Si cette copie a été ajoutée depuis un autre dossier, ou si le fichier a été déplacé, la relecture est impossible : utilisez « Corriger » pour modifier son texte à la main." }), { status: 404, headers: { 'Content-Type': 'application/json' } });
     }
 
     const fileBuffer = fs.readFileSync(filePath);

@@ -29,6 +29,10 @@ export async function POST(req: Request) {
     const data: EvaluationData = rawBody.result || rawBody;
     const level: string = rawBody.level || 'B2';
     const outputFolder: string | undefined = rawBody.outputFolder;
+    // Aperçu : on renvoie le PDF sans rien écrire dans le dossier de sortie.
+    const preview: boolean = rawBody.preview === true;
+    // Envoi par e-mail : le PDF précédent de la même copie (même nom) est remplacé au lieu de créer « nom_2.pdf ».
+    const replaceExisting: boolean = rawBody.replaceExisting === true;
 
     console.log(`[PO PDF API] Generating PDF for ${data.studentName || data.studentEmail || 'Unknown'} - Level: ${level}`);
 
@@ -38,7 +42,7 @@ export async function POST(req: Request) {
     const baseName = buildBaseName(data, level);
     let fileName = `${baseName}.pdf`;
 
-    try {
+    if (!preview) try {
       const outputDir = outputFolder && outputFolder.trim() !== ''
         ? path.resolve(outputFolder)
         : path.join(process.cwd(), 'data', 'outputs');
@@ -47,7 +51,9 @@ export async function POST(req: Request) {
         fs.mkdirSync(outputDir, { recursive: true });
       }
 
-      const filePath = await uniqueFilePath(outputDir, baseName, '.pdf');
+      const filePath = replaceExisting
+        ? path.join(outputDir, `${sanitizeFilename(baseName) || 'Bilan'}.pdf`)
+        : await uniqueFilePath(outputDir, baseName, '.pdf');
       fs.writeFileSync(filePath, pdfBuffer);
       fileName = path.basename(filePath);
       console.log(`[PO PDF API] Saved successfully to ${filePath}`);

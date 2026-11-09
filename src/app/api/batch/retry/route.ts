@@ -139,8 +139,10 @@ export async function POST(req: Request) {
       }
     }
 
-    // Double evaluation (jury) if requested
-    if (useDoubleEval && supervisionModel) {
+    // Double evaluation (jury) if requested : réservée au DELF (la supervision suit la grille DELF,
+    // elle remplacerait le résultat d'une dictée, traduction, grammaire ou composition par un rapport DELF).
+    const supervisionAllowed = !(isDictee || isTrad || isGramm || isComposition);
+    if (useDoubleEval && supervisionModel && supervisionAllowed) {
       try {
         const supervised = await superviseEvaluation(evaluationResult, studentText, subjectStr, language || 'VN', 0.3, supervisionModel, level || 'B2', apiKeys?.gemini, undefined, gradingMode, nativeLanguage);
         if (supervised._comparison) supervised._comparison.firstProvider = evalModel || 'inconnu';

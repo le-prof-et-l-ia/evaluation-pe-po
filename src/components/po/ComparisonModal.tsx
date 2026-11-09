@@ -3,37 +3,65 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { GitCompare, FileText, Zap } from "lucide-react";
 import { formatScore } from "@/lib/scoreUtils";
+import { DEFAULT_INTERPRETATION_CRITERIA } from "@/lib/po/interpretationEngine";
+import Aide from "@/components/Aide";
 
 interface ComparisonModalProps {
   comparisonModalData: any;
   setComparisonModalData: (value: any) => void;
   level: string;
+  /**
+   * Bilan tel qu'il est affiché dans le rapport (notes retouchées comprises).
+   * S'il est fourni, la « Note finale retenue » est celle du bilan ; sinon on
+   * prend la dernière évaluation disponible (3e, sinon 2e, sinon 1re).
+   */
+  finalData?: { globalScore?: number; criteriaScores?: Record<string, number>; maxScore?: number } | null;
 }
 
-const b1Labels: Record<string, string> = {
-  entretien: "Entretien dirigé",
-  interaction: "Exercice en interaction",
-  monologue: "Expression d'un point de vue",
-  lexique: "Lexique / Vocabulaire",
-  morphosyntaxe: "Morphosyntaxe / Grammaire",
-  phonologie: "Maîtrise du système phonologique",
-};
+interface PoCritere { key: string; label: string; maxScore: number }
 
-const b2Labels: Record<string, string> = {
-  monologue: "Monologue suivi",
-  interaction: "Exercice en interaction (Débat)",
-  lexique: "Lexique / Vocabulaire",
-  morphosyntaxe: "Morphosyntaxe / Grammaire",
-  phonologie: "Maîtrise du système phonologique",
-};
+// Mêmes grilles que celles du bilan (EvaluationResultView).
+const grilleB1: PoCritere[] = [
+  { key: "entretien", label: "Entretien dirigé", maxScore: 4 },
+  { key: "interaction", label: "Exercice en interaction", maxScore: 4 },
+  { key: "monologue", label: "Expression d'un point de vue", maxScore: 4 },
+  { key: "lexique", label: "Lexique / Vocabulaire", maxScore: 5 },
+  { key: "morphosyntaxe", label: "Morphosyntaxe / Grammaire", maxScore: 4 },
+  { key: "phonologie", label: "Maîtrise du système phonologique", maxScore: 4 },
+];
+
+const grilleB2: PoCritere[] = [
+  { key: "monologue", label: "Monologue suivi", maxScore: 5 },
+  { key: "interaction", label: "Exercice en interaction (Débat)", maxScore: 5 },
+  { key: "lexique", label: "Lexique / Vocabulaire", maxScore: 5 },
+  { key: "morphosyntaxe", label: "Morphosyntaxe / Grammaire", maxScore: 5 },
+  { key: "phonologie", label: "Maîtrise du système phonologique", maxScore: 5 },
+];
+
+function grillePour(level: string, data: any): PoCritere[] {
+  if (data?.firstEval?.examType === "interpretation" || data?.examType === "interpretation") {
+    return DEFAULT_INTERPRETATION_CRITERIA;
+  }
+  return level === "B1" ? grilleB1 : grilleB2;
+}
 
 export default function ComparisonModal({
   comparisonModalData,
   setComparisonModalData,
   level,
+  finalData,
 }: ComparisonModalProps) {
-  const isB1 = level === "B1";
-  const criteriaLabels = isB1 ? b1Labels : b2Labels;
+  const grille = grillePour(level, comparisonModalData);
+  const criteriaLabels: Record<string, string> = Object.fromEntries(grille.map((c) => [c.key, c.label]));
+  const maxGlobal: number =
+    Number(comparisonModalData?.firstEval?.maxScore) ||
+    Number(finalData?.maxScore) ||
+    grille.reduce((somme, c) => somme + c.maxScore, 0);
+  const noteFinaleGlobale = (): number | undefined =>
+    finalData?.globalScore ??
+    comparisonModalData?.thirdEval?.globalScore ??
+    comparisonModalData?.secondEval?.globalScore ??
+    comparisonModalData?.firstEval?.globalScore;
 
   return (
     <AnimatePresence>
@@ -52,6 +80,7 @@ export default function ComparisonModal({
               <h3 className="text-2xl font-black text-slate-800 flex items-center gap-3">
                 <GitCompare className="w-7 h-7 text-fuchsia-600" />
                 Analyse de la double évaluation PO (DELF {level})
+                <Aide cle="c_cmpColonnes" taille={18} />
               </h3>
               <button onClick={() => setComparisonModalData(null)} className="p-2 border-2 border-slate-200 rounded-full text-slate-500 hover:text-slate-800 hover:bg-slate-50 transition-all font-bold">
                 ✕
@@ -67,15 +96,15 @@ export default function ComparisonModal({
                       <th className="px-4 py-3">Critère</th>
                       <th className="px-4 py-3 text-center border-l border-slate-200 text-blue-700">Modèle INITIAL ({comparisonModalData.firstProvider || 'Examinateur 1'})</th>
                       <th className="px-4 py-3 text-center border-l border-slate-200 text-purple-700">DOUBLE ÉVALUATION ({comparisonModalData.secondProvider || 'Examinateur 2'})</th>
-                      <th className="px-4 py-3 text-center border-l border-slate-200 text-indigo-700">Note Finale retenue</th>
+                      <th className="px-4 py-3 text-center border-l border-slate-200 text-indigo-700"><span className="inline-flex items-center gap-1">Note Finale retenue <Aide cle="c_cmpNoteFinale" taille={13} /></span></th>
                     </tr>
                   </thead>
                   <tbody>
                     {Object.keys(comparisonModalData.firstEval?.criteriaScores || {}).map((crit) => {
                       const val1 = comparisonModalData.firstEval.criteriaScores[crit];
                       const val2 = comparisonModalData.secondEval?.criteriaScores?.[crit];
-                      const finalVal = val2 !== undefined ? val2 : val1;
-                      const maxScore = isB1 && crit === 'lexique' ? 5 : (isB1 ? 4 : 5);
+                      const finalVal = finalData?.criteriaScores?.[crit] ?? comparisonModalData.thirdEval?.criteriaScores?.[crit] ?? val2 ?? val1;
+                      const maxScore = grille.find((c) => c.key === crit)?.maxScore ?? 5;
                       const critLabel = criteriaLabels[crit] || crit;
 
                       return (
@@ -98,9 +127,9 @@ export default function ComparisonModal({
                   <tfoot className="bg-slate-100 font-black">
                     <tr>
                       <td className="px-4 py-3 uppercase text-xs text-slate-500">Note Finale Retenue</td>
-                      <td className="px-4 py-3 text-center border-l border-slate-200 text-slate-500">{formatScore(comparisonModalData.firstEval?.globalScore)}/25</td>
-                      <td className="px-4 py-3 text-center border-l border-slate-200 text-slate-500">{formatScore(comparisonModalData.secondEval?.globalScore)}/25</td>
-                      <td className="px-4 py-3 text-center border-l border-slate-200 text-slate-800 text-lg">{formatScore(comparisonModalData.secondEval?.globalScore ?? comparisonModalData.firstEval?.globalScore)}/25</td>
+                      <td className="px-4 py-3 text-center border-l border-slate-200 text-slate-500">{formatScore(comparisonModalData.firstEval?.globalScore)}/{maxGlobal}</td>
+                      <td className="px-4 py-3 text-center border-l border-slate-200 text-slate-500">{formatScore(comparisonModalData.secondEval?.globalScore)}/{maxGlobal}</td>
+                      <td className="px-4 py-3 text-center border-l border-slate-200 text-slate-800 text-lg">{formatScore(noteFinaleGlobale())}/{maxGlobal}</td>
                     </tr>
                   </tfoot>
                 </table>
@@ -108,7 +137,7 @@ export default function ComparisonModal({
 
               {/* FEEDBACKS MODIFIÉS */}
               <h4 className="text-sm font-black text-slate-700 uppercase tracking-wider mb-2 mt-8 flex items-center gap-2">
-                 <FileText className="w-4 h-4 text-slate-400"/> Feedbacks modifiés
+                 <FileText className="w-4 h-4 text-slate-400"/> Feedbacks modifiés <Aide cle="c_cmpFeedbacks" taille={14} />
               </h4>
               <div className="space-y-4">
                 {Object.keys(comparisonModalData.firstEval?.criteriaScores || {}).map((crit) => {
@@ -145,7 +174,7 @@ export default function ComparisonModal({
 
               {/* NOUVELLES ERREURS REPÉRÉES */}
               <h4 className="text-sm font-black text-slate-700 uppercase tracking-wider mb-2 mt-8 flex items-center gap-2">
-                 <Zap className="w-4 h-4 text-amber-500"/> Fautes non repérées dans l'évaluation initiale
+                 <Zap className="w-4 h-4 text-amber-500"/> Fautes non repérées dans l'évaluation initiale <Aide cle="c_cmpFautes" taille={14} />
               </h4>
               <div className="bg-white border text-sm border-slate-200 rounded-2xl overflow-hidden">
                 <table className="w-full text-left">

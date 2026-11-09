@@ -29,8 +29,10 @@ import {
   ExtractedArticle,
   SubjectGenerationResult,
   MEDIA_WHITELIST,
+  MAX_SOURCE_CHARS,
   countFrenchWords
 } from "@/lib/subjectGeneratorService";
+import Aide from "@/components/Aide";
 import { type KeyConfig } from "@/lib/retryUtils";
 
 interface SubjectGeneratorViewProps {
@@ -48,6 +50,15 @@ const THEME_SUGGESTIONS = [
   "Le droit à la déconnexion et la surcharge mentale",
   "La piétonnisation intégrale des centres-villes"
 ];
+
+/** Nom lisible d'un site à partir de son adresse (ex. « lemonde.fr »). */
+function mediaNameFromUrl(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "Source fournie par l'enseignant";
+  }
+}
 
 export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: SubjectGeneratorViewProps) {
   // ── Form State ─────────────────────────────────────────────────────────────
@@ -133,10 +144,10 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
       if (searchMode === "MANUAL" && manualText.trim()) {
         sourceArticleData = {
           title: `Document source : ${theme.trim()}`,
-          mediaName: "Presse francophone",
+          mediaName: manualUrl.trim() ? mediaNameFromUrl(manualUrl.trim()) : "Texte fourni par l'enseignant",
           publishedDate: new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "long", year: "numeric" }).format(new Date()),
           cleanText: manualText.trim(),
-          originalUrl: manualUrl.trim() || "https://francetvinfo.fr"
+          originalUrl: manualUrl.trim()
         };
       }
       // Étape 2 : Si mode Manuel avec URL ou candidat sélectionné
@@ -208,7 +219,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
     let content = `# Sujet d'épreuve : Production Orale ${result.level}\n`;
     content += `**Thème :** ${result.theme}\n`;
     content += `**Date de génération :** ${new Date().toLocaleDateString("fr-FR")}\n`;
-    content += `**Source d'origine :** ${result.sourceArticle.mediaName} - [Consulter l'article original](${result.sourceArticle.url})\n\n`;
+    content += `**Source d'origine :** ${result.sourceArticle.mediaName}${result.sourceArticle.url ? ` - [Consulter l'article original](${result.sourceArticle.url})` : ""}\n\n`;
     content += `---\n\n`;
 
     result.documents.forEach((doc, idx) => {
@@ -270,6 +281,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
         >
           <Globe className="w-3.5 h-3.5 text-blue-600" />
           <span>{MEDIA_WHITELIST.length} diffuseurs TV, Radio & Presse (sans paywall)</span>
+          <Aide cle="c_genDiffuseurs" taille={14} />
         </div>
       </div>
 
@@ -319,7 +331,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
 
             {/* 2. Niveau CECRL */}
             <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-700 block">Niveau CECRL visé</label>
+              <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">Niveau CECRL visé <Aide cle="c_genNiveau" taille={14} /></label>
               <div className="grid grid-cols-3 gap-2 p-1 bg-slate-100/70 rounded-2xl border border-slate-200/60">
                 {(["B1", "B2", "C1"] as const).map(lvl => (
                   <button
@@ -386,7 +398,10 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
             {/* 4. Longueur cible en mots */}
             <div className="space-y-2">
               <div className="flex justify-between items-center">
+                <div className="flex items-center gap-1.5">
                 <label className="text-xs font-bold text-slate-700">Longueur cible en mots {level === "C1" && articleCount > 1 ? "(par article)" : ""}</label>
+                <Aide cle="c_genLongueur" taille={14} />
+                </div>
                 <span className="text-[11px] font-semibold text-slate-500">
                   Tolérance ±5% : <span className="text-indigo-600 font-bold">{minTolerance} - {maxTolerance} mots</span>
                 </span>
@@ -419,7 +434,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
 
             {/* 5. Mode de recherche */}
             <div className="space-y-3 pt-2 border-t border-slate-100">
-              <label className="text-xs font-bold text-slate-700 block">Mode de recherche</label>
+              <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">Mode de recherche <Aide cle="c_genMode" taille={14} /></label>
               <div className="grid grid-cols-3 gap-1.5 p-1 bg-slate-100/70 rounded-2xl border border-slate-200/60 text-xs">
                 <button
                   type="button"
@@ -453,7 +468,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
               {searchMode === "MANUAL" && (
                 <div className="space-y-3 p-3 bg-slate-50 rounded-2xl border border-slate-200/80">
                   <div>
-                    <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">URL de l'article source</label>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1.5 mb-1">URL de l'article source <Aide cle="c_genSource" taille={13} /></label>
                     <input
                       type="url"
                       value={manualUrl}
@@ -471,6 +486,11 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
                       placeholder="Collez ici le texte brut de l'article..."
                       className="w-full bg-white border border-slate-200 rounded-xl p-2 text-xs outline-none resize-y"
                     />
+                    {manualText.trim().length > MAX_SOURCE_CHARS && (
+                      <p className="mt-1 text-[11px] text-amber-700 font-semibold">
+                        Texte trop long ({manualText.trim().length.toLocaleString("fr-FR")} caractères) : seuls les {MAX_SOURCE_CHARS.toLocaleString("fr-FR")} premiers caractères seront transmis à l'IA. Raccourcissez-le ou gardez le passage utile.
+                      </p>
+                    )}
                   </div>
                 </div>
               )}
@@ -486,9 +506,10 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
                   className="w-full py-3.5 px-4 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                 >
                   {isSearching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                  <span>{isSearching ? "Recherche en cours..." : "Rechercher parmi les 15 médias"}</span>
+                  <span>{isSearching ? "Recherche en cours..." : `Rechercher parmi les ${MEDIA_WHITELIST.length} médias`}</span>
                 </button>
               ) : (
+                <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => handleGenerate()}
@@ -498,6 +519,8 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
                   {isGenerating ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
                   <span>{isGenerating ? "Création en cours..." : "Générer le sujet pour l'oral"}</span>
                 </button>
+                <Aide cle="c_genOralGenerer" taille={18} />
+                </div>
               )}
             </div>
 
@@ -510,7 +533,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
             )}
           </div>
 
-          {/* Liste des 15 médias pris en charge */}
+          {/* Liste des médias pris en charge */}
           <div className="bg-slate-50 border border-slate-200/70 rounded-2xl p-4">
             <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2 flex items-center gap-1.5">
               <Globe className="w-3.5 h-3.5 text-blue-500" /> {MEDIA_WHITELIST.length} Diffuseurs Francophones interrogés
@@ -525,6 +548,9 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
                 </span>
               ))}
             </div>
+            <p className="mt-3 text-[11px] text-slate-500 leading-snug">
+              La recherche d'articles interroge DuckDuckGo et Google Actualités ; le texte est extrait via le service r.jina.ai.
+            </p>
           </div>
         </div>
 
@@ -548,7 +574,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
               <div className="space-y-2 max-w-sm mx-auto text-left text-xs text-slate-500 pt-4 border-t border-slate-100">
                 <div className="flex items-center gap-2">
                   <CheckCircle className="w-4 h-4 text-emerald-500" />
-                  <span>Recherche ciblée sur les 15 diffuseurs TV/Radio</span>
+                  <span>Recherche ciblée sur les {MEDIA_WHITELIST.length} diffuseurs TV/Radio</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <CheckCircle className="w-4 h-4 text-emerald-500" />
@@ -575,7 +601,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
             >
               <div className="flex justify-between items-center border-b border-slate-100 pb-3">
                 <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                  <BookOpen className="w-4 h-4 text-blue-600" /> {candidates.length} article(s) trouvé(s) sur les 15 diffuseurs
+                  <BookOpen className="w-4 h-4 text-blue-600" /> {candidates.length} article(s) trouvé(s) sur les {MEDIA_WHITELIST.length} diffuseurs
                 </h3>
                 <span className="text-[11px] text-slate-400">Cliquez pour générer</span>
               </div>
@@ -600,6 +626,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
                           {cand.title}
                         </h4>
                       </div>
+                      <div className="flex items-center gap-1 shrink-0">
                       <button
                         type="button"
                         onClick={() => handleGenerate(cand)}
@@ -608,6 +635,8 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
                         <span>Choisir</span>
                         <ChevronRight className="w-3.5 h-3.5" />
                       </button>
+                      <Aide cle="c_genChoisir" taille={14} />
+                      </div>
                     </div>
 
                     {cand.snippet && (
@@ -795,6 +824,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
                 </div>
 
                 {onUseAsSubject && (
+                  <div className="flex items-center gap-1.5">
                   <button
                     type="button"
                     onClick={handleTransferToCorrection}
@@ -803,6 +833,8 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
                     <span>Utiliser comme sujet pour l'oral</span>
                     <ArrowRight className="w-4 h-4" />
                   </button>
+                  <Aide cle="c_genUtiliserSujet" taille={16} />
+                  </div>
                 )}
               </div>
             </motion.div>
@@ -818,7 +850,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
                 <h3 className="font-bold text-slate-800 text-base">Prêt à générer un sujet d'épreuve orale</h3>
                 <p className="text-xs text-slate-500 leading-relaxed">
                   Indiquez un thème d'actualité, choisissez le niveau souhaité (B1, B2 ou C1) et lancez la génération.
-                  Le système recherchera un article récent (&lt; 9 mois) parmi les 15 diffuseurs TV/radio francophones et adaptera
+                  Le système recherchera un article récent (&lt; 9 mois) parmi les {MEDIA_WHITELIST.length} diffuseurs TV/radio francophones et adaptera
                   rigoureusement le texte déclencheur avec contrôle automatique du décompte de mots.
                 </p>
               </div>

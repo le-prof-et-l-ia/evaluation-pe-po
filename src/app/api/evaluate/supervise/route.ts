@@ -8,8 +8,14 @@ export async function POST(req: Request) {
       result, text, subject, language, temperature, evalModel, level,
       supervisionModel,
       apiKeys,
-      gradingMode = 'delf'
+      gradingMode = 'delf',
+      examType
     } = body;
+
+    // La double évaluation suit la grille DELF : on la refuse pour les autres épreuves.
+    if (examType && ['dictee', 'traduction', 'grammaire', 'composition'].includes(examType)) {
+      return NextResponse.json({ error: "La double évaluation n'est disponible que pour le DELF (pas pour la dictée, la traduction, la grammaire ni la composition)." }, { status: 400 });
+    }
 
     if (!result || !text || !subject) {
       return NextResponse.json({ error: 'result, text et subject sont obligatoires' }, { status: 400 });

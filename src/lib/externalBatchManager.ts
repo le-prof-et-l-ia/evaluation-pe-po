@@ -16,6 +16,7 @@ import {
   type ExternalSupervisionConfig,
 } from './externalSupervision';
 import { sanitizeFilename } from './pathSafety';
+import { getDictationOcrPrompt } from './dicteeEngine';
 
 export type ExternalBatchTaskType = 'ocr' | 'eval' | 'supervision';
 
@@ -34,6 +35,8 @@ export interface PrepareBatchExternalParams {
   exchangeFolder: string;
   items: BatchExternalItem[];
   config: ExternalSupervisionConfig;
+  /** Type d'épreuve (ex. 'dictee') : une dictée utilise un prompt OCR qui ne corrige pas les fautes. */
+  examType?: string;
 }
 
 export interface ImportBatchExternalParams {
@@ -48,7 +51,8 @@ export interface ImportBatchExternalParams {
  * (Claude Desktop, ChatGPT Desktop ou IA agentique avec accès aux fichiers locaux).
  */
 export async function prepareBatchExternalPackage(params: PrepareBatchExternalParams) {
-  const { taskType, exchangeFolder, items, config } = params;
+  const { taskType, exchangeFolder, items, config, examType } = params;
+  const isDictationOcr = taskType === 'ocr' && examType === 'dictee';
 
   if (!fs.existsSync(exchangeFolder)) {
     fs.mkdirSync(exchangeFolder, { recursive: true });
@@ -59,13 +63,13 @@ export async function prepareBatchExternalPackage(params: PrepareBatchExternalPa
   if (!fs.existsSync(sourcesDir)) fs.mkdirSync(sourcesDir, { recursive: true });
   if (!fs.existsSync(livrablesDir)) fs.mkdirSync(livrablesDir, { recursive: true });
 
-  const examTitle = `DELF ${config.level}`;
+  const examTitle = isDictationOcr ? 'Dictée' : `DELF ${config.level}`;
   const criteriaKeys = getCriteriaKeys(config.level).join(', ');
 
   let instructionsMd = '';
 
   if (taskType === 'ocr') {
-    const ocrGuidelines = getOcrPrompt(config.level, config.nativeLanguage);
+    const ocrGuidelines = isDictationOcr ? getDictationOcrPrompt() : getOcrPrompt(config.level, config.nativeLanguage);
     instructionsMd = `# 📄 Instructions d'OCR Externe — ${examTitle}
 Total de copies à transcrire : ${items.length}
 

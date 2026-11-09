@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import fs from "fs/promises";
 import path from "path";
-import { moveToRecycleBin } from "@/lib/pathSafety";
+import { moveToRecycleBin, moveManyToRecycleBin } from "@/lib/pathSafety";
 
 
 async function getDirSize(dirPath: string): Promise<number> {
@@ -63,19 +63,18 @@ export async function POST(req: Request) {
     const historyFile = path.join(process.cwd(), "data", "history.json");
     const lastBatchFile = path.join(process.cwd(), "data", "outputs", "last_batch.json");
 
-    let deletedFiles = 0;
+    // Tout passe par la corbeille Windows (récupérable) ; hors Windows, suppression directe.
+    const toRecycle: string[] = [];
     let deletedRecords = 0;
 
     // 1. Outputs (*.pdf, etc)
     try {
-      const outFiles = await fs.readdir(outputsDir);
+      const outFiles = await fs.readdir(outputsDir, { withFileTypes: true });
       for (const f of outFiles) {
-        const fp = path.join(outputsDir, f);
+        if (!f.isFile()) continue;
+        const fp = path.join(outputsDir, f.name);
         const stat = await fs.stat(fp);
-        if (stat.mtimeMs < cutoff) {
-          await fs.unlink(fp);
-          deletedFiles++;
-        }
+        if (stat.mtimeMs < cutoff) toRecycle.push(fp);
       }
     } catch {}
 
@@ -86,38 +85,47 @@ export async function POST(req: Request) {
         if (!f.endsWith('.json')) continue;
         const fp = path.join(evalsDir, f);
         const stat = await fs.stat(fp);
-        if (stat.mtimeMs < cutoff) {
-          await fs.unlink(fp);
-          deletedFiles++;
-        }
+        if (stat.mtimeMs < cutoff) toRecycle.push(fp);
       }
     } catch {}
 
-    // 3. History records
+    // 3. History records : les fiches retirées sont d'abord copiées dans un fichier
+    //    de sauvegarde, envoyé lui aussi à la corbeille (restaurable en cas d'erreur).
     try {
       const data = await fs.readFile(historyFile, "utf8");
       const records = JSON.parse(data);
       if (Array.isArray(records)) {
         const remaining = records.filter(r => new Date(r.date).getTime() >= cutoff);
-        deletedRecords = records.length - remaining.length;
-        await fs.writeFile(historyFile, JSON.stringify(remaining, null, 2), "utf8");
+        const removed = records.filter(r => new Date(r.date).getTime() < cutoff);
+        deletedRecords = removed.length;
+        if (removed.length > 0) {
+          const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
+          const backupFile = path.join(process.cwd(), "data", `historique-nettoye-${stamp}.json`);
+          await fs.writeFile(backupFile, JSON.stringify(removed, null, 2), "utf8");
+          toRecycle.push(backupFile);
+          await fs.writeFile(historyFile, JSON.stringify(remaining, null, 2), "utf8");
+        }
       }
     } catch {}
 
-    // 4. last_batch.json
+    // 4. last_batch.json (déjà couvert par le dossier outputs s'il s'y trouve)
     try {
       const stat = await fs.stat(lastBatchFile);
-      if (stat.mtimeMs < cutoff) {
-         await fs.unlink(lastBatchFile);
-         deletedFiles++;
-      }
+      if (stat.mtimeMs < cutoff && !toRecycle.includes(lastBatchFile)) toRecycle.push(lastBatchFile);
     } catch {}
+
+    await moveManyToRecycleBin(toRecycle);
+    const backupCount = deletedRecords > 0 ? 1 : 0;
+    const deletedFiles = toRecycle.length - backupCount;
+    const where = process.platform === 'win32'
+      ? "Les fichiers ont été envoyés à la Corbeille de Windows, d'où vous pouvez les restaurer (les fiches d'historique retirées s'y trouvent dans un fichier « historique-nettoye-… .json »)."
+      : "Les fichiers ont été supprimés définitivement.";
 
     return NextResponse.json({
       success: true,
       deletedFiles,
       deletedRecords,
-      message: `Nettoyage terminé : ${deletedFiles} fichiers et ${deletedRecords} copies d'historique supprimés.`
+      message: `Nettoyage terminé : ${deletedFiles} fichier(s) et ${deletedRecords} fiche(s) d'historique retirés. ${where}`
     });
 
   } catch (error: any) {
@@ -133,7 +141,6 @@ export async function DELETE() {
     const evalsDir   = path.join(dataDir, "evaluations");
     const inputsDir  = path.join(dataDir, "inputs");
     const historyFile   = path.join(dataDir, "history.json");
-    const batchLastFile = path.join(dataDir, "batch_last.json");
 
     let deletedCount = 0;
 
@@ -163,8 +170,7 @@ export async function DELETE() {
       await fs.writeFile(historyFile, "[]", "utf8");
     } catch {}
 
-    // Supprimer batch_last.json
-    try { await moveToRecycleBin(batchLastFile); deletedCount++; } catch {}
+    // La sauvegarde du dernier lot (last_batch.json) se trouve dans data/outputs : elle est déjà purgée ci-dessus.
 
     return NextResponse.json({
       success: true,

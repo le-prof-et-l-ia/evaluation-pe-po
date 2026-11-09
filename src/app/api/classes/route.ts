@@ -75,7 +75,8 @@ export async function POST(req: Request) {
                    const existingStudent = existing.students.find(es =>
                        (!!s.email && es.email === s.email) || (!!s.name && es.name === s.name));
                    if (existingStudent) {
-                       existingStudent.email = s.email; // update email if changed
+                       // Une liste sans e-mail ne doit pas effacer une adresse déjà enregistrée.
+                       if (s.email) existingStudent.email = s.email;
                        existingStudent.name = s.name;
                    } else {
                        existing.students.push(s);

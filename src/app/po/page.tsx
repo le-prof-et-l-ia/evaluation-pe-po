@@ -7,6 +7,8 @@ import EvaluationResultView, { EvaluationData } from "@/components/po/Evaluation
 import HeaderNav from "@/components/HeaderNav";
 import FolderPicker from "@/components/FolderPicker";
 import ClassManager from "@/components/ClassManager";
+import Aide from "@/components/Aide";
+import { usePersistentState } from "@/hooks/usePersistentState";
 import MaintenanceView from "@/components/MaintenanceView";
 import HistoryView from "@/components/HistoryView";
 import SubjectGeneratorView from "@/components/po/SubjectGeneratorView";
@@ -24,6 +26,23 @@ import { xhrPostWithUploadProgress, detectAudioMimeType } from "@/lib/po/uploadC
 import { useCorrectionSettings } from "@/hooks/useCorrectionSettings";
 import { useToast } from "@/hooks/useToast";
 import CustomExamConfigPanel from "@/components/CustomExamConfigPanel";
+
+/**
+ * Assemble un dossier et un nom de fichier avec le bon séparateur : « / » si le
+ * dossier en contient déjà (Mac, ou chemin saisi avec des /), « \\ » sinon (Windows).
+ */
+function joinPath(dir: string, name: string): string {
+  const base = (dir || "").replace(/[\\/]+$/, "");
+  if (!base) return name;
+  const sep = base.includes("/") ? "/" : "\\";
+  return `${base}${sep}${name}`;
+}
+
+/** Message affiché quand la transcription dépasse le délai maximum de 3 minutes. */
+const MSG_DELAI_TRANSCRIPTION = "Transcription abandonnée : l'enregistrement a mis plus de 3 minutes à être traité.\n\nCause probable : enregistrement trop long, ou serveurs de l'IA surchargés. Essayez de découper l'enregistrement en morceaux plus courts (par exemple un fichier par partie de l'épreuve), puis importez-les à nouveau, ou réessayez un peu plus tard.";
+
+/** Formats audio acceptés pour l'import (affichage). */
+const FORMATS_AUDIO_TEXTE = "MP3, WAV, M4A, OGG, WEBM, AAC, FLAC, CAF";
 
 export default function Home() {
   const [isShutdown, setIsShutdown] = useState(false);
@@ -150,6 +169,8 @@ export default function Home() {
     signature, setSignature,
   } = useCorrectionSettings("po");
   const [isExternalBatchLoading, setIsExternalBatchLoading] = useState(false);
+  // Type de la dernière préparation « Automatisation externe » : l'import cherche les livrables correspondants.
+  const [lastExternalTaskType, setLastExternalTaskType] = usePersistentState<'ocr' | 'eval'>('po_lastExternalTaskType', 'eval');
   // Double évaluation externe (Claude sans clé) : modale + contexte.
   const [externalModalOpen, setExternalModalOpen] = useState(false);
   const [externalTasks, setExternalTasks] = useState<ExternalSupervisionTask[]>([]);
@@ -172,6 +193,11 @@ export default function Home() {
   const [isEvaluatingAll, setIsEvaluatingAll] = useState(false);
   const [evaluationResult, setEvaluationResult] = useState<EvaluationData | null>(null);
   const { toast, setToast, showToast } = useToast();
+  // Vrai si l'utilisateur a modifié le bilan affiché depuis son enregistrement automatique.
+  const [resultEdited, setResultEdited] = useState(false);
+  // La double évaluation suit la grille DELF : elle n'existe pas pour l'interprétation.
+  const doubleEvalAllowed = examType !== 'interpretation';
+  const doubleEvalActive = useDoubleEval && doubleEvalAllowed;
 
   // Restauration du dernier lot en cours (les réglages, eux, sont gérés
   // par useCorrectionSettings).
@@ -217,6 +243,7 @@ export default function Home() {
   const [isRetrying, setIsRetrying] = useState<string | null>(null);
   const [isAddingToBatch, setIsAddingToBatch] = useState(false);
   const [comparisonModalData, setComparisonModalData] = useState<any>(null);
+  const [comparisonFinalData, setComparisonFinalData] = useState<any>(null);
   // Persistence for batch results
   useEffect(() => {
     localStorage.setItem("delf_pending_reviews", JSON.stringify(pendingReviews));
@@ -259,9 +286,13 @@ export default function Home() {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
     
-    // Sort by lastModified (oldest first)
-    files.sort((a, b) => a.lastModified - b.lastModified);
-    
+    // Ordre alphabétique « naturel » des noms (enregistrement2 avant enregistrement10) :
+    // c'est l'ordre dans lequel les transcriptions sont assemblées.
+    files.sort((a, b) => a.name.localeCompare(b.name, "fr", { numeric: true, sensitivity: "base" }));
+    if (files.length > 1) {
+      showToast(`Les ${files.length} enregistrements seront assemblés dans l'ordre alphabétique de leurs noms : ${files.map(f => f.name).join(" → ")}.`, "Ordre des fichiers audio");
+    }
+
     setIsOcrLoading(true);
     setOcrStatus("Préparation...");
     
@@ -333,7 +364,7 @@ export default function Home() {
               ocrModel, 
               level,
               nativeLanguage,
-              apiKeys: Object.fromEntries(Object.entries(apiKeys).map(([k, v]) => [k, { ...v, keyMode }]))
+              apiKeys: Object.fromEntries(Object.entries(apiKeys).map(([k, v]) => [k, { ...v, keyMode: ocrKeyMode }]))
             },
             controller.signal,
             (phase, percent) => {
@@ -389,7 +420,7 @@ export default function Home() {
     } catch (err: any) {
       if (err.name === 'AbortError' || (err instanceof DOMException && err.name === 'AbortError')) {
         if (isAbortedByTimeout) {
-          alert("Transcription abandonnée : le délai d'attente maximum (3 minutes) a été dépassé. Cela se produit généralement en cas de surcharge prolongée des serveurs Gemini ou de réseau instable.");
+          alert(MSG_DELAI_TRANSCRIPTION);
         } else {
           alert("Transcription abandonnée par l'utilisateur.");
         }
@@ -526,7 +557,7 @@ export default function Home() {
         showToast(evaluationResultData.fallbackNotice, "Repli automatique de modèle");
       }
 
-      if (useDoubleEval && supervisionMode === 'external') {
+      if (doubleEvalActive && supervisionMode === 'external') {
         // Double éval externe (sans clé) : on affiche la 1re évaluation puis on
         // ouvre la modale d'export/import.
         abortControllerRef.current = null;
@@ -534,19 +565,25 @@ export default function Home() {
         const enriched = { ...evaluationResultData, id: savedId || evaluationResultData.id };
         setEvaluationResult(enriched);
         setIsLoading(false);
-        openExternalSupervision('single', [{
-          fileId: enriched.file || 'single',
-          subject: enriched.subject || subject || 'Sujet',
-          transcription: enriched.transcription || text || '',
-          result1: enriched,
-        }]);
-      } else if (useDoubleEval && supervisionProvider && supervisionModel) {
+        if (externalEvalSupported) {
+          openExternalSupervision('single', [{
+            fileId: enriched.file || 'single',
+            subject: enriched.subject || subject || 'Sujet',
+            transcription: enriched.transcription || text || '',
+            result1: enriched,
+          }]);
+        } else {
+          // Épreuve hors DELF : pas de double évaluation externe, la 1re évaluation est retenue.
+          showToast("Double évaluation externe indisponible pour cette épreuve (DELF uniquement) : la première évaluation est retenue.", "Double évaluation");
+        }
+      } else if (doubleEvalActive && supervisionProvider && supervisionModel) {
         abortControllerRef.current = null;
         await handleSuperviseResultWithState(evaluationResultData);
       } else {
         const savedId = await autoSaveToHistory(evaluationResultData);
         const enriched = { ...evaluationResultData, id: savedId || evaluationResultData.id };
         setEvaluationResult(enriched);
+        setResultEdited(false);
         setIsLoading(false);
       }
     } catch (err: any) {
@@ -657,6 +694,14 @@ export default function Home() {
       });
       setSubject(recoveredSubject);
       setText(detailedData.transcription || "");
+      // L'épreuve affichée suit celle du bilan rouvert (sinon : mauvais barème, mauvaise grille).
+      if (detailedData.examType === 'interpretation') {
+        setExamType('interpretation');
+      } else if (detailedData.level === 'B1' || detailedData.level === 'B2') {
+        handleLevelChange(detailedData.level);
+      } else if (examType === 'interpretation') {
+        setExamType(level === 'B1' ? 'delf_b1' : 'delf_b2');
+      }
       setMode("SINGLE");
       setMainView("CORRECTION");
       setEvalResultVersion(v => v + 1);
@@ -665,9 +710,15 @@ export default function Home() {
     }
   };
 
+  // L'évaluation par IA externe (consignes, double évaluation, automatisation de bureau)
+  // ne connaît que la grille DELF : on la bloque pour les autres épreuves plutôt que
+  // de produire une évaluation DELF d'une dictée, d'une traduction ou d'une interprétation.
+  const externalEvalSupported = examType !== 'interpretation';
+  const EXTERNAL_UNSUPPORTED_MSG = "L'évaluation par une IA externe (sans clé API) ne prend en charge pour l'instant que le DELF B1 et B2 : ses consignes suivent la grille du DELF.\n\nPour l'interprétation, utilisez la correction avec une clé Gemini (« Analyser » ou « Lancer le lot complet »).";
 
   // ── Double évaluation externe (Claude, sans clé API) ──────────────────────
   const openExternalInitial = (context: 'single' | 'batch', tasks: any[]) => {
+    if (!externalEvalSupported) { alert(EXTERNAL_UNSUPPORTED_MSG); return; }
     if (tasks.length === 0) { alert("Aucune copie à soumettre à l'évaluation externe."); return; }
     setExternalMode('initial');
     setExternalContext(context);
@@ -676,6 +727,7 @@ export default function Home() {
   };
 
   const openExternalSupervision = (context: 'single' | 'batch', tasks: ExternalSupervisionTask[]) => {
+    if (!externalEvalSupported) { alert(EXTERNAL_UNSUPPORTED_MSG + "\n\nLa première évaluation est conservée."); return; }
     if (tasks.length === 0) { alert("Aucune copie à superviser en externe."); return; }
     setExternalMode('supervision');
     setExternalContext(context);
@@ -684,6 +736,7 @@ export default function Home() {
   };
 
   const handlePrepareExternalBatch = async (taskType: 'ocr' | 'eval' | 'supervision', itemsOverride?: any[]) => {
+    if (taskType !== 'ocr' && !externalEvalSupported) { alert(EXTERNAL_UNSUPPORTED_MSG); return; }
     try {
       setIsExternalBatchLoading(true);
       let itemsToPrepare: any[] = [];
@@ -701,7 +754,7 @@ export default function Home() {
         }
         itemsToPrepare = files.map(f => ({
           file: f,
-          filePath: `${batchFolder}\\${f}`,
+          filePath: joinPath(batchFolder, f),
           subject: batchSubject || subject || 'Sujet'
         }));
       } else if (taskType === 'supervision') {
@@ -709,7 +762,7 @@ export default function Home() {
           .filter(r => r.status === 'success' && !r.isOcrOnly)
           .map(r => ({
             file: r.file,
-            filePath: `${batchFolder}\\${r.file}`,
+            filePath: joinPath(batchFolder, r.file),
             subject: r.subject || batchSubject || subject || 'Sujet',
             transcription: r.transcription || '',
             result1: r
@@ -727,7 +780,7 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           taskType,
-          exchangeFolder: outputFolder ? `${outputFolder}\\_ECHANGE_IA` : undefined,
+          exchangeFolder: outputFolder ? joinPath(outputFolder, "_ECHANGE_IA") : undefined,
           items: itemsToPrepare,
           config: {
             level,
@@ -740,6 +793,7 @@ export default function Home() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Erreur lors de la préparation.");
       showToast(`Dossier d'échange préparé (${data.totalItems} fichiers).`, "Automatisation Externe");
+      if (taskType === 'ocr' || taskType === 'eval') setLastExternalTaskType(taskType);
       alert(` Dossier d'échange préparé pour Claude / ChatGPT Desktop !\n\nEmplacement : ${data.exchangeFolder}\nFichier de consignes : ${data.instructionsPath}\n\n1. Ouvrez l'application IA de bureau (Claude ou ChatGPT avec accès disque local).\n2. Donnez-lui le fichier CONSIGNES.md (ou glissez le dossier).\n3. L'IA produira les livrables dans le sous-dossier 'livrables'.\n4. Une fois terminé, cliquez sur "Importer livrables externes".`);
     } catch (err: any) {
       alert(`Erreur : ${err.message || 'Impossible de préparer le lot externe'}`);
@@ -757,7 +811,7 @@ export default function Home() {
       } else if (pendingReviews.length > 0) {
         itemsToExpect = pendingReviews.map(r => ({
           file: r.file,
-          filePath: `${batchFolder}\\${r.file}`,
+          filePath: joinPath(batchFolder, r.file),
           subject: r.subject || batchSubject || subject || 'Sujet',
           transcription: r.transcription || '',
           studentName: r.studentName,
@@ -771,7 +825,7 @@ export default function Home() {
         const files: string[] = listData.files || [];
         itemsToExpect = files.map(f => ({
           file: f,
-          filePath: `${batchFolder}\\${f}`,
+          filePath: joinPath(batchFolder, f),
           subject: batchSubject || subject || 'Sujet'
         }));
       }
@@ -781,7 +835,7 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           taskType,
-          exchangeFolder: outputFolder ? `${outputFolder}\\_ECHANGE_IA` : undefined,
+          exchangeFolder: outputFolder ? joinPath(outputFolder, "_ECHANGE_IA") : undefined,
           items: itemsToExpect,
           config: {
             level,
@@ -1027,7 +1081,7 @@ export default function Home() {
       // Supprimer le brouillon de l'évaluation en 2 étapes si applicable
       if (finalData.draftId) {
         try {
-          await fetch(`/api/pending/${finalData.draftId}`, { method: 'DELETE' });
+          await fetch(`/api/po/pending/${finalData.draftId}`, { method: 'DELETE' });
           fetchPendingDrafts();
         } catch (e) {
           console.error("Erreur lors de la suppression du brouillon:", e);
@@ -1043,6 +1097,7 @@ export default function Home() {
          });
       }
 
+      setResultEdited(false);
       alert(`Succès ! Bilan PDF généré, historique sauvegardé${emailStatus}.`);
     } catch (err: any) {
       const msg = err?.message || "";
@@ -1124,16 +1179,21 @@ export default function Home() {
       if (!res.ok) {
         throw new Error("Erreur de sauvegarde sur le serveur.");
       }
-      alert("Dossier d'évaluation enregistré en attente !");
-      
-      // Clear form states
-      setTranscriptionPart1("");
-      setGeneratedQuestions([]);
-      setDraftStudentName("");
-      setDraftStudentEmail("");
-      setDraftClassId("");
-      setSelectedDraft(null);
-      setTranscriptionPart2("");
+      const nom = draftStudentName || "Inconnu";
+      if (selectedDraft) {
+        // Dossier ouvert : on le garde ouvert, ce qui vient d'être enregistré devient la référence.
+        setSelectedDraft({ ...selectedDraft, transcriptionPart2: transcriptionPart2 || null, generatedQuestions });
+        showToast(`Les modifications du dossier de ${nom} sont enregistrées. Le dossier reste ouvert ; vous pourrez aussi le reprendre depuis « Dossiers en attente ».`, "Dossier enregistré");
+      } else {
+        showToast(`Le dossier de ${nom} est enregistré. Retrouvez-le dans « Dossiers en attente (Partie 2) », à droite, pour le reprendre après le débat.`, "Dossier enregistré");
+        setTranscriptionPart1("");
+        setGeneratedQuestions([]);
+        setDraftStudentName("");
+        setDraftStudentEmail("");
+        setDraftClassId("");
+        setSelectedDraft(null);
+        setTranscriptionPart2("");
+      }
       fetchPendingDrafts();
     } catch (e: any) {
       alert("Erreur de sauvegarde : " + e.message);
@@ -1144,7 +1204,7 @@ export default function Home() {
 
   const handleResumeDraft = async (draftId: string) => {
     try {
-      const res = await fetch(`/api/pending/${draftId}`);
+      const res = await fetch(`/api/po/pending/${draftId}`);
       if (!res.ok) throw new Error("Impossible de charger le brouillon.");
       const draft = await res.json();
       setSelectedDraft(draft);
@@ -1166,7 +1226,7 @@ export default function Home() {
     e.stopPropagation();
     if (!confirm("Voulez-vous vraiment supprimer ce brouillon ?")) return;
     try {
-      const res = await fetch(`/api/pending/${draftId}`, { method: "DELETE" });
+      const res = await fetch(`/api/po/pending/${draftId}`, { method: "DELETE" });
       if (!res.ok) throw new Error("Erreur serveur lors de la suppression.");
       alert("Brouillon supprimé avec succès.");
       fetchPendingDrafts();
@@ -1270,7 +1330,7 @@ export default function Home() {
     } catch (err: any) {
       if (err.name === 'AbortError' || (err instanceof DOMException && err.name === 'AbortError')) {
         if (isAbortedByTimeout) {
-          alert("Transcription abandonnée : le délai d'attente maximum (3 minutes) a été dépassé.");
+          alert(MSG_DELAI_TRANSCRIPTION);
         } else {
           alert("Transcription abandonnée par l'utilisateur.");
         }
@@ -1327,7 +1387,7 @@ export default function Home() {
     abortControllerRef.current = controller;
     
     // Formater le texte fusionné
-    const mergedText = `=== DÉBUT DE LA PRODUCTION ORALE DELF B2 ===
+    const mergedText = `=== DÉBUT DE LA PRODUCTION ORALE DELF ${level} ===
 
 --- PARTIE 1 : EXPOSÉ (MONOLOGUE SUIVI) ---
 Candidat :
@@ -1419,9 +1479,12 @@ ${transcriptionPart2}
         evaluationResultData.draftId = selectedDraft.id;
       }
 
-      if (useDoubleEval && supervisionMode === 'external') {
+      if (doubleEvalActive && supervisionMode === 'external') {
         abortControllerRef.current = null;
+        const savedIdExt = await autoSaveToHistory(evaluationResultData);
+        evaluationResultData = { ...evaluationResultData, id: savedIdExt || evaluationResultData.id };
         setEvaluationResult(evaluationResultData);
+        setResultEdited(false);
         setIsLoading(false);
         openExternalSupervision('single', [{
           fileId: evaluationResultData.file || 'single',
@@ -1429,11 +1492,14 @@ ${transcriptionPart2}
           transcription: evaluationResultData.transcription || mergedText,
           result1: evaluationResultData,
         }]);
-      } else if (useDoubleEval && supervisionProvider && supervisionModel) {
+      } else if (doubleEvalActive && supervisionProvider && supervisionModel) {
         abortControllerRef.current = null;
         await handleSuperviseResultWithState(evaluationResultData);
       } else {
-        setEvaluationResult(evaluationResultData);
+        // Comme en mode Unique : le bilan est enregistré dans l'Historique dès qu'il est prêt.
+        const savedId = await autoSaveToHistory(evaluationResultData);
+        setEvaluationResult({ ...evaluationResultData, id: savedId || evaluationResultData.id });
+        setResultEdited(false);
         setIsLoading(false);
       }
     } catch (err: any) {
@@ -1464,6 +1530,8 @@ ${transcriptionPart2}
       }
     }
 
+    if (hasUnsentBatch() && !window.confirm("Le lot affiché contient des bilans non envoyés ou des notes que vous avez ajustées.\n\nLancer un nouveau lot les fait disparaître de l'écran.\n\nContinuer ?")) return;
+
     setIsBatchLoading(true);
     setBatchProgress(null);
     setBatchKeyInfo(null);
@@ -1473,7 +1541,7 @@ ${transcriptionPart2}
       const qs = new URLSearchParams();
       if (evalModel) qs.append("evalModel", evalModel);
       if (autoEmail) qs.append("autoEmail", "true");
-      if (!ocrOnly && useDoubleEval) qs.append("useDoubleEval", "true");
+      if (!ocrOnly && doubleEvalActive) qs.append("useDoubleEval", "true");
 
       const res = await fetch(`/api/po/batch?${qs.toString()}`, {
         method: "POST",
@@ -1495,6 +1563,8 @@ ${transcriptionPart2}
           ocrKeyMode,
           notationType,
           emailConfig,
+          emailSubject,
+          emailBody,
           examType,
           sourceSpeech: interpretationSourceSpeech,
           interpretationMode,
@@ -1527,7 +1597,12 @@ ${transcriptionPart2}
             if (!dataStr) continue;
             try {
               const event = JSON.parse(dataStr);
-              if (event.type === 'progress') {
+              if (event.type === 'start') {
+                if (Array.isArray(event.ignoredFiles) && event.ignoredFiles.length > 0) {
+                  const liste = event.ignoredFiles.slice(0, 8).join(", ") + (event.ignoredFiles.length > 8 ? `… (+${event.ignoredFiles.length - 8})` : "");
+                  showToast(`${event.ignoredFiles.length} fichier(s) ignoré(s), car ce ne sont pas des enregistrements audio (${FORMATS_AUDIO_TEXTE}) : ${liste}`, "Fichiers ignorés");
+                }
+              } else if (event.type === 'progress') {
                 setBatchProgress({ message: event.message, fileIndex: event.fileIndex, totalFiles: event.totalFiles, phase: event.phase });
               } else if (event.type === 'key_update') {
                 setBatchKeyInfo({ source: event.source, key: event.key });
@@ -1671,9 +1746,10 @@ ${transcriptionPart2}
 
       setPendingReviews(prev => {
         const next = [...prev];
-        next[idx] = { ...next[idx], transcription: data.text, isDirty: true };
+        next[idx] = { ...next[idx], transcription: data.text, transcriptionChanged: true };
         return next;
       });
+      showToast(`Le texte de « ${itemToRetry.file} » a été relu. La note n'a pas été recalculée : cliquez sur « Corriger » puis « Relancer l'Analyse » pour la mettre à jour.`, "Relecture terminée");
 
     } catch (err: any) {
       alert(`Erreur OCR pour ${itemToRetry.file} : ${getFriendlyErrorMessage(err)}`);
@@ -1757,9 +1833,19 @@ ${transcriptionPart2}
 
   const handleSendBatchEmails = async () => {
     if (pendingReviews.length === 0) return;
+    const aEnvoyer = pendingReviews.filter(r => r.status === 'success' && r.studentEmail && !r.emailSent).length;
+    const sansAdresse = pendingReviews.filter(r => r.status === 'success' && !r.studentEmail && !r.emailSent).length;
+    if (aEnvoyer === 0) {
+      alert(sansAdresse > 0
+        ? `Aucun e-mail à envoyer : ${sansAdresse} copie(s) n'ont pas d'adresse e-mail. Saisissez-la dans la case à droite de chaque copie.`
+        : "Aucun e-mail à envoyer : tous les bilans ont déjà été envoyés.");
+      return;
+    }
+    if (!window.confirm(`Envoyer ${aEnvoyer} bilan(s) PDF par e-mail ?${sansAdresse > 0 ? `\n\n${sansAdresse} copie(s) sans adresse e-mail seront laissées de côté.` : ""}\n\nLes e-mails partent immédiatement et ne peuvent pas être rappelés.`)) return;
     setIsSendingBatch(true);
     let sentCount = 0;
     const sentFiles: string[] = [];
+    const failures: string[] = [];
     for (let i = 0; i < pendingReviews.length; i++) {
         const item = pendingReviews[i];
         if (!item.studentEmail || item.status !== 'success' || item.emailSent) continue;
@@ -1774,7 +1860,7 @@ ${transcriptionPart2}
             const regRes = await fetch("/api/po/pdf", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ result: item, level, outputFolder })
+                body: JSON.stringify({ result: item, level, outputFolder, replaceExisting: true })
             });
             
             if (!regRes.ok) throw new Error("Échec de génération PDF");
@@ -1819,8 +1905,9 @@ ${transcriptionPart2}
 
             sentCount++;
             sentFiles.push(item.file);
-        } catch (e) { 
+        } catch (e: any) { 
             console.error(e); 
+            failures.push(`${item.file} : ${e?.message || "échec"}`);
         } finally {
             setPendingReviews(prev => {
               const nr = [...prev];
@@ -1846,7 +1933,12 @@ ${transcriptionPart2}
       return updated;
     });
     
-    alert(`${sentCount} e-mails expédiés et historique sauvegardé !`);
+    alert(
+      `${sentCount} e-mail(s) envoyé(s)` +
+      (failures.length > 0 ? `, ${failures.length} échec(s) :\n${failures.join("\n")}` : "") +
+      (sansAdresse > 0 ? `\n${sansAdresse} copie(s) ignorée(s) faute d'adresse e-mail.` : "") +
+      (failures.length === 0 && sansAdresse === 0 ? ". Historique sauvegardé." : "")
+    );
   };
 
   const handleEvaluateAll = async () => {
@@ -1879,7 +1971,7 @@ ${transcriptionPart2}
       const res = await fetch("/api/po/pdf", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ result: item, level, outputFolder })
+        body: JSON.stringify({ result: item, level, outputFolder, preview: true })
       });
       if (!res.ok) {
         const errData = await res.json().catch(() => ({ error: "Erreur serveur" }));
@@ -1916,13 +2008,20 @@ ${transcriptionPart2}
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
-          subject: batchSubject || "Lot", 
+          // Même type d'épreuve que le lot : l'interprétation garde son discours source et son barème.
+          subject: examType === 'interpretation' ? "Interprétation" : (itemToTransfer?.subject || batchSubject || subject || "Sujet"), 
           text: batchCorrectionText, 
           evalModel, 
           language, 
           level,
           apiKeys: Object.fromEntries(Object.entries(apiKeys).map(([k, v]) => [k, { ...v, keyMode }])),
-          notationType
+          nativeLanguage,
+          notationType,
+          examType: examType === 'interpretation' ? 'interpretation' : 'delf',
+          sourceSpeech: interpretationSourceSpeech,
+          interpretationMode,
+          maxScore: customMaxScore,
+          customInstructions,
         })
       });
       
@@ -1983,7 +2082,8 @@ ${transcriptionPart2}
           studentId: currentItem.studentId,
           studentName: currentItem.studentName,
           studentEmail: currentItem.studentEmail,
-          emailSent: false
+          emailSent: false,
+          transcriptionChanged: false
         };
         return nr;
       });
@@ -2001,15 +2101,23 @@ ${transcriptionPart2}
   const isSupervisingAll = superviseUiState !== 'idle';
 
   const handleSuperviseBatch = async () => {
-    const successItems = pendingReviews.filter(r => r.status === 'success');
-    if (successItems.length === 0) {
-      alert("Aucune copie éligible à la supervision. Les copies en erreur sont ignorées.");
+    if (!doubleEvalAllowed) {
+      alert("La double évaluation n'est pas disponible pour l'interprétation.");
       return;
     }
+    // Seulement les copies évaluées et pas encore double-évaluées (ni en attente d'évaluation, ni en erreur).
+    const successItems = pendingReviews.filter(r => r.status === 'success' && !r.isOcrOnly && !r._comparison && !r.isSupervising);
+    if (successItems.length === 0) {
+      alert("Aucune copie à double-évaluer : il faut des copies déjà évaluées et pas encore double-évaluées (les copies en erreur ou en attente d'évaluation sont ignorées).");
+      return;
+    }
+    const ajustees = successItems.filter(r => r.isDirty).length;
+    if (ajustees > 0 && !window.confirm(`${ajustees} copie(s) contiennent des notes que vous avez ajustées : la double évaluation les remplacera par le nouveau résultat.\n\nContinuer ?`)) return;
     
     superviseControlRef.current = 'running';
     setSuperviseUiState('running');
     let count = 0;
+    const echecsSup: string[] = [];
     
     try {
       for (const item of successItems) {
@@ -2074,10 +2182,13 @@ ${transcriptionPart2}
           count++;
         } catch (err: any) {
           console.error(`Erreur supervision ${item.file}:`, err);
+          echecsSup.push(`${item.file} : ${err?.message || "échec"}`);
         }
       }
       if (superviseControlRef.current !== 'stopped') {
-        alert(`${count} copie(s) ont été double-évaluées avec succès !`);
+        alert(`${count} copie(s) double-évaluée(s) avec succès.` + (echecsSup.length > 0 ? `\n\n${echecsSup.length} échec(s) (la première évaluation est conservée) :\n${echecsSup.join("\n")}` : ""));
+      } else if (echecsSup.length > 0) {
+        alert(`Double évaluation arrêtée. ${count} copie(s) traitée(s), ${echecsSup.length} échec(s) :\n${echecsSup.join("\n")}`);
       }
     } finally {
       superviseControlRef.current = 'stopped';
@@ -2155,17 +2266,30 @@ ${transcriptionPart2}
     if (pendingReviews.length === 0) return;
     setIsGeneratingAll(true);
     let count = 0;
+    const echecs: string[] = [];
     try {
       for (const item of pendingReviews) {
         if (item.status !== 'success') continue;
-        await fetch("/api/po/pdf", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ result: item, level, outputFolder })
-        });
-        count++;
+        try {
+          const r = await fetch("/api/po/pdf", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ result: item, level, outputFolder })
+          });
+          if (!r.ok) {
+            const err = await r.json().catch(() => ({ error: "Erreur serveur" }));
+            throw new Error(err.error || "Erreur serveur");
+          }
+          count++;
+        } catch (e: any) {
+          echecs.push(`${item.file} : ${e?.message || "échec"}`);
+        }
       }
-      alert(`${count} PDF(s) générés dans le dossier de sortie.`);
+      if (echecs.length === 0) {
+        alert(`${count} PDF(s) générés dans le dossier de sortie.`);
+      } else {
+        alert(`${count} PDF(s) générés, ${echecs.length} échec(s) :\n\n${echecs.join("\n")}`);
+      }
     } catch (e) {
       alert("Erreur lors de la génération groupée.");
     } finally {
@@ -2322,7 +2446,7 @@ ${transcriptionPart2}
         
         // Step 2: Évaluation IA (OCR + Analyse)
         setAddBatchStatus(`🧠 Évaluation IA de "${fileName}"...`);
-        const mimeType = file.type || 'application/pdf';
+        const mimeType = detectAudioMimeType(file.name, file.type);
         console.log(`[AddToBatch] Sending to /api/evaluate: subject="${(batchSubject || 'auto').substring(0, 30)}", mimeType=${mimeType}`);
         
         const res = await fetch("/api/po/evaluate", {
@@ -2416,7 +2540,7 @@ ${transcriptionPart2}
       const regRes = await fetch("/api/po/pdf", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ result: item, level, outputFolder })
+          body: JSON.stringify({ result: item, level, outputFolder, replaceExisting: true })
       });
       if (!regRes.ok) throw new Error("Échec de génération PDF");
       const cd = regRes.headers.get('Content-Disposition');
@@ -2502,6 +2626,66 @@ ${transcriptionPart2}
     );
   };
 
+  // ── Protection contre la perte de travail ────────────────────────────────
+  // Lot affiché contenant des bilans non envoyés, des notes ajustées ou un texte relu.
+  const hasUnsentBatch = () =>
+    pendingReviews.some(r => r.status === 'success' && (!r.emailSent || r.isDirty || r.transcriptionChanged));
+  // Bilan affiché (modes Unique / 2 Étapes) non enregistré, ou modifié depuis son enregistrement.
+  const hasUnsavedResult = () =>
+    !!evaluationResult && (!(evaluationResult as any).id || resultEdited);
+  // Dossier du mode 2 Étapes ouvert avec une transcription du débat non sauvegardée.
+  const draftHasUnsavedChanges = () =>
+    !!selectedDraft && transcriptionPart2 !== (selectedDraft.transcriptionPart2 || "");
+
+  const switchMode = (newMode: "SINGLE" | "BATCH" | "TWO_STAGE") => {
+    if (hasUnsavedResult() && !window.confirm(
+      !(evaluationResult as any)?.id
+        ? "Le bilan affiché n'a pas été enregistré : en changeant d'onglet, il sera fermé et perdu.\n\nPour le conserver, annulez puis utilisez « Générer PDF » ou « Valider et Envoyer l'E-mail ».\n\nChanger d'onglet quand même ?"
+        : "Vous avez modifié le bilan affiché depuis son enregistrement. En changeant d'onglet, il sera fermé et ces modifications seront perdues (la version enregistrée reste dans l'Historique).\n\nChanger d'onglet quand même ?"
+    )) return;
+    setMode(newMode);
+    setEvaluationResult(null);
+    setResultEdited(false);
+  };
+
+  const closeDraft = () => {
+    if (draftHasUnsavedChanges() && !window.confirm(
+      "La transcription du débat (Partie 2) n'a pas été sauvegardée : elle sera perdue si vous fermez le dossier.\n\nPour la garder, annulez puis cliquez sur « Sauvegarder les modifications ».\n\nFermer le dossier quand même ?"
+    )) return;
+    setSelectedDraft(null);
+    setSubject("");
+    setTranscriptionPart1("");
+    setGeneratedQuestions([]);
+    setTranscriptionPart2("");
+    setDraftStudentName("");
+    setDraftStudentEmail("");
+    setDraftClassId("");
+    setPart1ModelInfo(null);
+    setPart2ModelInfo(null);
+  };
+
+  const handleResetEverything = () => {
+    if ((hasUnsentBatch() || hasUnsavedResult()) && !window.confirm(
+      "Tout fermer ?\n\n" +
+      (hasUnsentBatch() ? "Le lot affiché contient des bilans non envoyés ou des notes ajustées, qui disparaîtront de l'écran.\n" : "") +
+      (hasUnsavedResult() ? "Le bilan affiché n'est pas enregistré ou a été modifié depuis son enregistrement : ces informations seront perdues.\n" : "") +
+      "\nContinuer ?"
+    )) return;
+    setEvaluationResult(null);
+    setResultEdited(false);
+    setBatchResults(null);
+    setPendingReviews([]);
+    setAudioBase64(null);
+    setAudioMimeType(null);
+    setTranscriptionModelInfo(null);
+  };
+
+  // Type de livrables que le bouton « Importer livrables Desktop » de l'écran de révision va chercher.
+  const reviewImportType: 'ocr' | 'eval' | 'supervision' =
+    pendingReviews.some(r => r.status === 'error' && (!r.transcription || !r.transcription.trim())) ? 'ocr'
+      : (pendingReviews.some(r => r.status === 'error') ? 'eval' : 'supervision');
+  const reviewImportLabel = reviewImportType === 'ocr' ? "transcriptions" : reviewImportType === 'eval' ? "évaluations" : "doubles évaluations";
+
   if (isShutdown) {
     return (
       <div className="fixed inset-0 bg-slate-900 text-white flex flex-col items-center justify-center p-6 z-50">
@@ -2544,18 +2728,25 @@ ${transcriptionPart2}
 
         <div className="flex flex-col gap-1 mb-8">
            <button onClick={() => setMainView("CORRECTION")} className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${mainView === "CORRECTION" ? "bg-blue-50 text-blue-700 shadow-sm border border-blue-100" : "text-slate-500 hover:bg-slate-100"}`}><LayoutDashboard className="w-4 h-4"/> Correction</button>
-           <button onClick={() => setMainView("GENERATOR")} className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${mainView === "GENERATOR" ? "bg-indigo-50 text-indigo-700 shadow-sm border border-indigo-100" : "text-slate-500 hover:bg-slate-100"}`}><Sparkles className="w-4 h-4 text-indigo-600"/> Sujets PO</button>
+           <div className="flex items-center gap-1">
+             <button onClick={() => setMainView("GENERATOR")} className={`flex-1 flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${mainView === "GENERATOR" ? "bg-indigo-50 text-indigo-700 shadow-sm border border-indigo-100" : "text-slate-500 hover:bg-slate-100"}`}><Sparkles className="w-4 h-4 text-indigo-600"/> Sujets PO</button>
+             <Aide cle="po_sujetsPo" taille={14} />
+           </div>
            <button onClick={() => setMainView("CLASSES")} className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${mainView === "CLASSES" ? "bg-blue-50 text-blue-700 shadow-sm border border-blue-100" : "text-slate-500 hover:bg-slate-100"}`}><Users className="w-4 h-4"/> Classes</button>
            <button onClick={() => setMainView("HISTORY")} className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${mainView === "HISTORY" ? "bg-blue-50 text-blue-700 shadow-sm border border-blue-100" : "text-slate-500 hover:bg-slate-100"}`}><Clock className="w-4 h-4"/> Historique</button>
-           <button onClick={() => setMainView("MAINTENANCE")} className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${mainView === "MAINTENANCE" ? "bg-rose-50 text-rose-700 shadow-sm border border-rose-100" : "text-slate-500 hover:bg-slate-100"}`}><Database className="w-4 h-4"/> Maintenance</button>
+           <div className="flex items-center gap-1">
+             <button onClick={() => setMainView("MAINTENANCE")} className={`flex-1 flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${mainView === "MAINTENANCE" ? "bg-rose-50 text-rose-700 shadow-sm border border-rose-100" : "text-slate-500 hover:bg-slate-100"}`}><Database className="w-4 h-4"/> Maintenance</button>
+             <Aide cle="partage_maintenance" taille={14} />
+           </div>
         </div>
 
         {mainView === "CORRECTION" && (
             <>
                 <div className="flex p-1 bg-slate-100/80 rounded-2xl mb-6 gap-0.5">
-                  <button onClick={() => { setMode("SINGLE"); setEvaluationResult(null); }} className={`flex-1 py-2 rounded-xl text-[11px] font-bold transition-all cursor-pointer ${mode === "SINGLE" ? "bg-white shadow-sm text-blue-700" : "text-slate-500 hover:text-slate-900"}`}>Unique</button>
-                  <button onClick={() => { setMode("TWO_STAGE"); setEvaluationResult(null); }} className={`flex-1 py-2 rounded-xl text-[11px] font-bold transition-all cursor-pointer ${mode === "TWO_STAGE" ? "bg-white shadow-sm text-blue-700" : "text-slate-500 hover:text-slate-900"}`}>2 Étapes</button>
-                  <button onClick={() => { setMode("BATCH"); setEvaluationResult(null); }} className={`flex-1 py-2 rounded-xl text-[11px] font-bold transition-all cursor-pointer ${mode === "BATCH" ? "bg-white shadow-sm text-blue-700" : "text-slate-500 hover:text-slate-900"}`}>Lot</button>
+                  <button onClick={() => switchMode("SINGLE")} className={`flex-1 py-2 rounded-xl text-[11px] font-bold transition-all cursor-pointer ${mode === "SINGLE" ? "bg-white shadow-sm text-blue-700" : "text-slate-500 hover:text-slate-900"}`}>Unique</button>
+                  <button onClick={() => switchMode("TWO_STAGE")} className={`flex-1 py-2 rounded-xl text-[11px] font-bold transition-all cursor-pointer ${mode === "TWO_STAGE" ? "bg-white shadow-sm text-blue-700" : "text-slate-500 hover:text-slate-900"}`}>2 Étapes</button>
+                  <button onClick={() => switchMode("BATCH")} className={`flex-1 py-2 rounded-xl text-[11px] font-bold transition-all cursor-pointer ${mode === "BATCH" ? "bg-white shadow-sm text-blue-700" : "text-slate-500 hover:text-slate-900"}`}>Lot</button>
+                  <Aide cle="po_modes" taille={14} className="self-center mr-1" />
                 </div>
 
                 <div className="flex-1 overflow-y-auto pr-2">
@@ -2563,7 +2754,10 @@ ${transcriptionPart2}
                     {/* OCR selector */}
                     <div>
                       <div className="flex items-center justify-between px-1 mb-2 gap-2">
-                        <label className="text-[10px] font-bold text-slate-400 uppercase block">📷 OCR & Transcription (Lecture)</label>
+                        <div className="flex items-center gap-1">
+                          <label className="text-[10px] font-bold text-slate-400 uppercase block">📷 OCR & Transcription (Lecture)</label>
+                          <Aide cle="partage_cleLecture" taille={14} />
+                        </div>
                         <select 
                           value={ocrKeyMode}
                           onChange={e => setOcrKeyMode(e.target.value as 'free_only' | 'paid_only' | 'both')}
@@ -2574,16 +2768,19 @@ ${transcriptionPart2}
                           <option value="paid_only">Payant uniquement</option>
                         </select>
                       </div>
-                      <div className="grid grid-cols-2 gap-1 bg-white p-1 rounded-xl border border-slate-200">
+                      <div className="flex items-center gap-1">
+                      <div className="flex-1 grid grid-cols-2 gap-1 bg-white p-1 rounded-xl border border-slate-200">
                         <button onClick={() => setOcrModel('gemini-3.8-flash')} className={`py-1.5 rounded-lg text-[10px] font-bold transition-all ${ocrModel === 'gemini-3.8-flash' || ocrModel === 'gemini-flash' || ocrModel === 'gemini-3.7-flash' || ocrModel === 'gemini-3.5-flash' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:text-blue-600'}`}>3.8 Flash</button>
                         <button onClick={() => setOcrModel('gemini-3.6-flash')} className={`py-1.5 rounded-lg text-[10px] font-bold transition-all ${ocrModel === 'gemini-3.6-flash' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:text-blue-600'}`}>3.6 Flash</button>
+                      </div>
+                      <Aide cle="partage_modeleLecture" taille={14} />
                       </div>
                     </div>
 
                     {/* Model Selection Grid */}
                     <div className="pt-3 border-t border-slate-200">
                       <div className="flex items-center justify-between px-1 mb-2 gap-2">
-                        <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2"><Brain className="w-3 h-3"/>Modèle d'évaluation</h2>
+                        <div className="flex items-center gap-1"><h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2"><Brain className="w-3 h-3"/>Modèle d'évaluation</h2><Aide cle="partage_cleEvaluation" taille={14} /></div>
                         <select 
                           value={keyMode}
                           onChange={e => setKeyMode(e.target.value as 'free_only' | 'paid_only' | 'both')}
@@ -2594,7 +2791,8 @@ ${transcriptionPart2}
                           <option value="paid_only">Payant uniquement</option>
                         </select>
                       </div>
-                      <div className="grid grid-cols-[auto_1fr_1fr] gap-1 items-center text-[10px]">
+                      <div className="flex items-start gap-1">
+                      <div className="flex-1 grid grid-cols-[auto_1fr_1fr] gap-1 items-center text-[10px]">
                         <div className="px-2 py-1"></div>
                         <div className="text-center font-bold text-slate-400 uppercase tracking-wider py-1">Léger</div>
                         <div className="text-center font-bold text-slate-400 uppercase tracking-wider py-1">Lourd</div>
@@ -2603,19 +2801,23 @@ ${transcriptionPart2}
                         <button onClick={() => setEvalModel('flash')} className={`py-1.5 rounded-lg font-bold transition-all ${evalModel === 'flash' ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 hover:text-blue-600 border border-slate-200'}`}>3.8 Flash</button>
                         <button onClick={() => setEvalModel('pro')} className={`py-1.5 rounded-lg font-bold transition-all ${evalModel === 'pro' ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 hover:text-blue-600 border border-slate-200'}`}>4 Argon</button>
                       </div>
+                      <Aide cle="partage_modeleEvaluation" taille={14} className="mt-1.5" />
+                      </div>
                     </div>
 
                     {/* Double évaluation */}
                     <div className="pt-3 border-t border-slate-200 flex flex-col gap-3">
                       <div className="flex items-center gap-3">
-                        <input type="checkbox" id="useDoubleEval" checked={useDoubleEval} onChange={e => setUseDoubleEval(e.target.checked)} className="w-5 h-5 rounded cursor-pointer accent-blue-600" />
+                        <input type="checkbox" id="useDoubleEval" checked={doubleEvalActive} disabled={!doubleEvalAllowed} onChange={e => setUseDoubleEval(e.target.checked)} className="w-5 h-5 rounded cursor-pointer accent-blue-600 disabled:opacity-40 disabled:cursor-not-allowed" />
                         <label htmlFor="useDoubleEval" className="text-sm font-bold text-slate-600 cursor-pointer flex flex-col">
-                          <span className="flex items-center gap-2"><Brain className="w-4 h-4 text-purple-600" /> Double évaluation {useDoubleEval && <span className="bg-purple-100 text-purple-700 text-[10px] px-2 py-0.5 rounded-full">Actif</span>}</span>
-                          <span className="text-[10px] text-slate-400 font-normal">Supervision double évaluation (temps x2)</span>
+                          <span className="flex items-center gap-2"><Brain className="w-4 h-4 text-purple-600" /> Double évaluation {doubleEvalActive && <span className="bg-purple-100 text-purple-700 text-[10px] px-2 py-0.5 rounded-full">Actif</span>}</span>
+                          <span className="text-[10px] text-slate-400 font-normal">{doubleEvalAllowed ? "Supervision double évaluation (temps x2)" : "Indisponible pour l'interprétation : la relecture par un second évaluateur suit la grille du DELF."}</span>
                         </label>
+                        <Aide cle="doubleEvaluation" />
                       </div>
-                      {useDoubleEval && (
+                      {doubleEvalActive && (
                         <div className="space-y-3 pt-2 border-t border-slate-200">
+                          <p className="text-[10px] font-bold text-slate-400 uppercase px-1 flex items-center gap-1">Second évaluateur <Aide cle="modeSupervision" taille={13} /></p>
                           <div className="flex gap-1 bg-white p-1 rounded-xl border border-slate-200">
                             <button onClick={() => setSupervisionMode('internal')} className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${supervisionMode === 'internal' ? 'bg-violet-600 text-white shadow-sm' : 'text-slate-500 hover:text-violet-600'}`}>Dans l'appli</button>
                             <button onClick={() => setSupervisionMode('external')} className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${supervisionMode === 'external' ? 'bg-violet-600 text-white shadow-sm' : 'text-slate-500 hover:text-violet-600'}`}>IA externe (sans clé)</button>
@@ -2625,7 +2827,7 @@ ${transcriptionPart2}
                           )}
                           {supervisionMode === 'internal' && (
                           <div>
-                            <label className="text-[10px] font-bold text-slate-400 uppercase px-1 mb-1 block">Modèle de double évaluation</label>
+                            <div className="flex items-center gap-1 mb-1"><label className="text-[10px] font-bold text-slate-400 uppercase px-1 block">Modèle de double évaluation</label><Aide cle="partage_modeleDoubleEval" taille={13} /></div>
                             <div className="grid grid-cols-[auto_1fr_1fr] gap-1 items-center text-[10px]">
                               <div className="px-1 py-1"></div>
                               <div className="text-center font-bold text-slate-400 uppercase py-0.5">Léger</div>
@@ -2642,7 +2844,7 @@ ${transcriptionPart2}
 
                     {/* Modèle d'E-mail */}
                     <div className="pt-3 border-t border-slate-200">
-                      <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 px-1 flex items-center gap-2"><Mail className="w-3.5 h-3.5"/> Modèle d'E-mail</h2>
+                      <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 px-1 flex items-center gap-2"><Mail className="w-3.5 h-3.5"/> Modèle d'E-mail <Aide cle="partage_modeleEmail" taille={14} /></h2>
                       <div className="space-y-4">
                         <div className="space-y-1">
                           <label className="text-[10px] font-bold text-slate-400 uppercase px-1">Objet</label>
@@ -2663,13 +2865,16 @@ ${transcriptionPart2}
             </>
         )}
         <div className="pt-4 border-t border-slate-200 mt-auto flex-shrink-0">
+          <div className="flex items-center gap-1.5">
           <button 
             onClick={handleShutdown} 
-            className="w-full py-3 px-4 bg-slate-100 hover:bg-rose-50 hover:text-rose-600 border border-slate-200 hover:border-rose-100 rounded-2xl flex items-center justify-center gap-2 font-bold text-slate-600 transition-all cursor-pointer"
+            className="flex-1 py-3 px-4 bg-slate-100 hover:bg-rose-50 hover:text-rose-600 border border-slate-200 hover:border-rose-100 rounded-2xl flex items-center justify-center gap-2 font-bold text-slate-600 transition-all cursor-pointer"
           >
             <Power className="w-4 h-4" />
             Quitter l'application
           </button>
+          <Aide cle="partage_quitter" taille={14} />
+          </div>
         </div>
       </motion.aside>
 
@@ -2684,6 +2889,7 @@ ${transcriptionPart2}
               {/* Type d'épreuve */}
               <div className="flex items-center gap-2">
                 <span className="text-xs text-slate-900 font-bold">Épreuve :</span>
+                <Aide cle="po_epreuve" taille={14} />
                 <div className="flex p-0.5 bg-white rounded-lg border border-slate-200">
                   <button 
                     onClick={() => handleExamTypeChange("delf_b1")} 
@@ -2709,6 +2915,7 @@ ${transcriptionPart2}
               {/* Type de notation */}
               <div className="flex items-center gap-2">
                 <span className="text-xs text-slate-900 font-bold">Barème :</span>
+                <Aide cle="partage_bareme" taille={14} />
                 {examType === 'interpretation' ? (
                   <span className="px-2.5 py-1 bg-white border border-indigo-200 text-indigo-700 rounded-lg text-[10px] font-bold shadow-xs">
                     Note sur {customMaxScore} pts
@@ -2735,6 +2942,7 @@ ${transcriptionPart2}
             {/* Deuxième ligne : Autres options sans abréviations */}
             <div className="flex items-center gap-4 text-xs pt-2 border-t border-slate-200/60 w-full justify-start">
               <span>Langue du feedback :</span>
+              <Aide cle="partage_langueFeedback" taille={14} />
               <select value={language} onChange={e => setLanguage(e.target.value as "FR"|"VN"|"CZ"|"TW"|"EN")} className="bg-transparent font-bold text-blue-600 outline-none cursor-pointer">
                 <option value="VN">VN</option>
                 <option value="FR">FR</option>
@@ -2754,7 +2962,9 @@ ${transcriptionPart2}
                 <input type="checkbox" checked={plusEnglish} onChange={e => setPlusEnglish(e.target.checked)} className="rounded text-blue-600 border-slate-300 focus:ring-blue-500/20" />
                 <span>+ anglais</span>
               </label>
-              <button onClick={() => { setEvaluationResult(null); setBatchResults(null); setAudioBase64(null); setAudioMimeType(null); setTranscriptionModelInfo(null); }} className="ml-4 p-2 text-slate-400 hover:text-blue-600 cursor-pointer"><RefreshCcw className="w-4 h-4"/></button>
+              <Aide cle="partage_langueMaternelle" taille={14} />
+              <button onClick={handleResetEverything} className="ml-4 p-2 text-slate-400 hover:text-blue-600 cursor-pointer" title="Tout fermer et repartir de zéro"><RefreshCcw className="w-4 h-4"/></button>
+              <Aide cle="partage_remiseAZero" taille={16} />
             </div>
           </div>
         </header>
@@ -2781,7 +2991,7 @@ ${transcriptionPart2}
                 {/* Sujet DELF si B1/B2 */}
                 {examType !== 'interpretation' && (
                   <div className="space-y-2">
-                    <div className="flex justify-between items-center bg-slate-100/50 p-2 rounded-xl"><label className="text-sm font-bold text-slate-700 ml-2">Sujet de l'épreuve orale DELF {level}</label><button onClick={() => setSubject("")} className="text-[10px] text-slate-400 hover:text-red-500 font-bold uppercase tracking-widest flex items-center gap-1 mr-2"><RotateCcw className="w-3 h-3"/> Reset</button></div>
+                    <div className="flex justify-between items-center bg-slate-100/50 p-2 rounded-xl"><div className="flex items-center gap-1.5 ml-2"><label className="text-sm font-bold text-slate-700">Sujet de l'épreuve orale DELF {level}</label><Aide cle="partage_sujet" taille={16} /></div><button onClick={() => setSubject("")} className="text-[10px] text-slate-400 hover:text-red-500 font-bold uppercase tracking-widest flex items-center gap-1 mr-2"><RotateCcw className="w-3 h-3"/> Reset</button></div>
                     <textarea value={subject} onChange={e => setSubject(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-sm h-24 focus:ring-2 focus:ring-blue-500/20 outline-none resize-none" placeholder="Décrivez le sujet de production orale..."/>
                   </div>
                 )}
@@ -2789,6 +2999,7 @@ ${transcriptionPart2}
                   <div className="flex justify-between items-center bg-slate-100/50 p-2 rounded-xl">
                     <div className="flex items-center gap-2">
                       <label className="text-sm font-bold text-slate-700 ml-2">Enregistrement Étudiant</label>
+                      <Aide cle="po_zoneTranscription" taille={16} />
                       {text && text.trim().length > 0 && renderTranscriptionBadge(transcriptionModelInfo, true)}
                     </div>
                     <div className="flex items-center gap-3">
@@ -2829,11 +3040,13 @@ ${transcriptionPart2}
                           >
                             🔗 Chat Gemini Web
                           </a>
+                          <Aide cle="po_copierPromptIpa" taille={16} />
                           <label className="cursor-pointer px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-xl text-xs font-bold transition-colors">
                             🎙️ Importer Audio API
-                            <input type="file" className="hidden" accept=".mp3,.wav,.m4a,.ogg,.webm,.aac,.flac,.flac,.caf" onChange={handleFileUpload} multiple/>
+                            <input type="file" className="hidden" accept=".mp3,.wav,.m4a,.ogg,.webm,.aac,.flac,.caf" onChange={handleFileUpload} multiple/>
                           </label>
-                          <button onClick={() => { setText(""); setTranscriptionModelInfo(null); }} className="text-[10px] text-slate-400 hover:text-red-500 font-bold uppercase tracking-widest flex items-center gap-1"><RotateCcw className="w-3 h-3"/> Reset</button>
+                          <Aide cle="po_importerAudio" taille={16} />
+                          <button onClick={() => { setText(""); setTranscriptionModelInfo(null); setAudioBase64(null); setAudioMimeType(null); }} className="text-[10px] text-slate-400 hover:text-red-500 font-bold uppercase tracking-widest flex items-center gap-1"><RotateCcw className="w-3 h-3"/> Reset</button>
                         </div>
                       )}
                     </div>
@@ -2924,9 +3137,11 @@ ${transcriptionPart2}
                       }}
                     />
                   </label>
+                  <Aide cle="partage_chargerBilan" taille={18} className="self-center" />
                   <button
                     onClick={() => {
-                      if (!subject || !text) return alert("Veyillez remplir le sujet et la transcription.");
+                      if (!externalEvalSupported) return alert(EXTERNAL_UNSUPPORTED_MSG);
+                      if (!subject || !text) return alert("Veuillez remplir le sujet et la transcription.");
                       openExternalInitial('single', [{
                         fileId: 'single',
                         subject,
@@ -2939,7 +3154,9 @@ ${transcriptionPart2}
                   >
                     <Brain className="w-5 h-5 text-amber-600" /> Éval. externe
                   </button>
+                  <Aide cle="evalExterneUnique" taille={18} className="self-center" />
                   <button onClick={handleEvaluate} className="px-10 py-4 bg-slate-900 text-white rounded-2xl font-bold flex items-center gap-2 hover:bg-black">Analyser <Send className="w-4 h-4"/></button>
+                  <Aide cle="partage_analyser" taille={18} className="self-center" />
                 </div>
               </motion.div>
             )}
@@ -2948,7 +3165,12 @@ ${transcriptionPart2}
               <motion.div key="two-stage" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col gap-6 h-full p-4">
 
                 
-                {selectedDraft === null ? (
+                {examType !== 'delf_b2' ? (
+                  <div className="bg-amber-50 border border-amber-200 text-amber-900 rounded-3xl p-6 text-sm space-y-2">
+                    <p className="font-bold flex items-center gap-2"><AlertTriangle className="w-5 h-5 text-amber-600" /> Le mode 2 Étapes concerne uniquement le DELF B2</p>
+                    <p>Il suit le déroulement de l'épreuve B2 : un exposé, puis un débat avec des questions de relance. Choisissez « DELF B2 » à côté de « Épreuve » en haut de la page pour l'utiliser. Pour le DELF B1 ou l'interprétation, utilisez les onglets « Unique » ou « Lot ».</p>
+                  </div>
+                ) : selectedDraft === null ? (
                   // LISTE DES BROUILLONS & FORMULAIRE CRÉATION PARTIE 1
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                     
@@ -2957,13 +3179,20 @@ ${transcriptionPart2}
                       <div className="flex justify-between items-center bg-slate-50 p-3 rounded-2xl border border-slate-100">
                         <h3 className="text-md font-bold text-slate-800 flex items-center gap-2">
                           <Plus className="w-5 h-5 text-blue-600" /> Étape 1 : Créer un nouveau dossier (Exposé)
+                          <Aide cle="po_deuxEtapes" taille={16} />
                         </h3>
-                        <button onClick={() => { setSubject(""); setTranscriptionPart1(""); setGeneratedQuestions([]); setPart1ModelInfo(null); }} className="text-[10px] text-slate-400 hover:text-red-500 font-bold uppercase tracking-widest flex items-center gap-1 mr-1"><RotateCcw className="w-3.5 h-3.5"/> Réinitialiser</button>
+                        <div className="flex items-center gap-1 mr-1">
+                        <button onClick={() => {
+                          if ((subject || transcriptionPart1 || generatedQuestions.length > 0) && !window.confirm("Réinitialiser l'étape 1 ?\n\nLe sujet, la transcription de l'exposé et les questions générées seront effacés.")) return;
+                          setSubject(""); setTranscriptionPart1(""); setGeneratedQuestions([]); setPart1ModelInfo(null);
+                        }} className="text-[10px] text-slate-400 hover:text-red-500 font-bold uppercase tracking-widest flex items-center gap-1"><RotateCcw className="w-3.5 h-3.5"/> Réinitialiser</button>
+                        <Aide cle="po_effacerEtape" taille={14} />
+                        </div>
                       </div>
 
                       {/* Sujet */}
                       <div className="space-y-2">
-                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Sujet de l'exposé</label>
+                        <div className="flex items-center gap-1"><label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Sujet de l'exposé</label><Aide cle="po_sujetExpose" taille={14} /></div>
                         <textarea 
                           value={subject} 
                           onChange={e => setSubject(e.target.value)} 
@@ -2977,6 +3206,7 @@ ${transcriptionPart2}
                         <div className="flex justify-between items-center bg-slate-100/50 p-2 rounded-xl">
                           <div className="flex items-center gap-2">
                             <label className="text-sm font-bold text-slate-700 ml-2">Transcription de l'Exposé (Partie 1)</label>
+                            <Aide cle="po_transcriptionEtape" taille={14} />
                             {transcriptionPart1 && transcriptionPart1.trim().length > 0 && renderTranscriptionBadge(part1ModelInfo, true)}
                           </div>
                           <div className="flex items-center gap-2 mr-2">
@@ -2985,10 +3215,16 @@ ${transcriptionPart2}
                                 <Loader2 className="w-3 h-3 animate-spin text-blue-500" /> {ocrStatus}
                               </span>
                             ) : (
+                              <>
                               <label className="cursor-pointer px-3 py-1.5 bg-blue-650 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-colors">
                                 🎙️ Importer Audio
                                 <input type="file" className="hidden" accept=".mp3,.wav,.m4a,.ogg,.webm,.aac,.flac,.caf" onChange={handleFileUploadPart1} />
                               </label>
+                              <Aide cle="po_importerAudioEtape" taille={14} />
+                              </>
+                            )}
+                            {isOcrLoading && (
+                              <button onClick={handleAbortOcr} className="px-2 py-1 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded-lg text-[10px] font-bold cursor-pointer" title="Annuler la transcription en cours">Annuler</button>
                             )}
                           </div>
                         </div>
@@ -3005,11 +3241,11 @@ ${transcriptionPart2}
 
                       {/* Génération de questions */}
                       {transcriptionPart1 && (
-                        <div className="pt-2">
+                        <div className="pt-2 flex items-center gap-2">
                           <button
                             onClick={handleGenerateB2Questions}
                             disabled={isGeneratingQuestions}
-                            className="w-full py-3 bg-slate-900 text-white hover:bg-black rounded-2xl font-bold text-sm flex items-center justify-center gap-2 shadow-sm transition-all disabled:opacity-50 cursor-pointer"
+                            className="flex-1 py-3 bg-slate-900 text-white hover:bg-black rounded-2xl font-bold text-sm flex items-center justify-center gap-2 shadow-sm transition-all disabled:opacity-50 cursor-pointer"
                           >
                             {isGeneratingQuestions ? (
                               <>
@@ -3021,6 +3257,7 @@ ${transcriptionPart2}
                               </>
                             )}
                           </button>
+                          <Aide cle="po_genererQuestions" taille={18} />
                         </div>
                       )}
 
@@ -3057,7 +3294,7 @@ ${transcriptionPart2}
                             <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Enregistrer le dossier candidat</h4>
                             <div className="grid grid-cols-2 gap-4">
                               <div className="space-y-1">
-                                <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Nom de l'élève</label>
+                                <div className="flex items-center gap-1"><label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Nom de l'élève</label><Aide cle="po_identiteDossier" taille={13} /></div>
                                 <input 
                                   type="text" 
                                   value={draftStudentName} 
@@ -3088,13 +3325,16 @@ ${transcriptionPart2}
                                 {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                               </select>
                             </div>
+                            <div className="flex items-center gap-2">
                             <button
                               onClick={handleSavePendingDraft}
                               disabled={isSavingDraft}
-                              className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-bold text-sm flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
+                              className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-bold text-sm flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
                             >
                               {isSavingDraft ? <Loader2 className="w-4 h-4 animate-spin" /> : <Folder className="w-4 h-4" />} Enregistrer en attente (Partie 2)
                             </button>
+                            <Aide cle="po_enregistrerAttente" taille={18} />
+                            </div>
                           </div>
                         </div>
                       )}
@@ -3105,6 +3345,7 @@ ${transcriptionPart2}
                       <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100 mb-4">
                         <h3 className="text-md font-bold text-slate-800 flex items-center gap-2">
                           <Clock className="w-5 h-5 text-amber-500 animate-pulse" /> Dossiers en attente (Partie 2)
+                          <Aide cle="po_dossiersAttente" taille={16} />
                         </h3>
                       </div>
                       
@@ -3163,7 +3404,7 @@ ${transcriptionPart2}
                       <div className="space-y-1">
                         <div className="flex items-center gap-2">
                           <button 
-                            onClick={() => { setSelectedDraft(null); setSubject(""); setTranscriptionPart1(""); setGeneratedQuestions([]); setTranscriptionPart2(""); setPart1ModelInfo(null); setPart2ModelInfo(null); }} 
+                            onClick={closeDraft}
                             className="mr-2 p-1.5 bg-white border border-slate-200 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-50 shadow-sm transition-all cursor-pointer"
                           >
                             <ArrowLeft className="w-4 h-4" />
@@ -3183,11 +3424,12 @@ ${transcriptionPart2}
                           Sauvegarder les modifications
                         </button>
                         <button
-                          onClick={() => { setSelectedDraft(null); setSubject(""); setTranscriptionPart1(""); setGeneratedQuestions([]); setTranscriptionPart2(""); setPart1ModelInfo(null); setPart2ModelInfo(null); }}
+                          onClick={closeDraft}
                           className="px-4 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-2xl text-xs font-bold transition-all cursor-pointer"
                         >
                           Fermer le dossier
                         </button>
+                        <Aide cle="po_sauvegarderFermer" taille={16} />
                       </div>
                     </div>
 
@@ -3231,6 +3473,7 @@ ${transcriptionPart2}
                               <h4 className="text-sm font-bold text-slate-700 flex items-center gap-2">
                                 <Brain className="w-4.5 h-4.5 text-blue-600" /> Partie 2 : Réponses de l'élève au Débat
                               </h4>
+                              <Aide cle="po_transcriptionEtape" taille={14} />
                               {transcriptionPart2 && transcriptionPart2.trim().length > 0 && renderTranscriptionBadge(part2ModelInfo, true)}
                             </div>
                             <div className="flex items-center gap-2">
@@ -3239,10 +3482,16 @@ ${transcriptionPart2}
                                   <Loader2 className="w-3 h-3 animate-spin text-blue-500" /> {ocrStatusPart2}
                                 </span>
                               ) : (
+                                <>
                                 <label className="cursor-pointer px-3 py-1.5 bg-blue-650 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-colors">
                                   🎙️ Importer Audio Partie 2
                                   <input type="file" className="hidden" accept=".mp3,.wav,.m4a,.ogg,.webm,.aac,.flac,.caf" onChange={handleFileUploadPart2} />
                                 </label>
+                                <Aide cle="po_importerAudioEtape" taille={14} />
+                                </>
+                              )}
+                              {isOcrLoadingPart2 && (
+                                <button onClick={() => ocrAbortControllerRefPart2.current?.abort()} className="px-2 py-1 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded-lg text-[10px] font-bold cursor-pointer" title="Annuler la transcription en cours">Annuler</button>
                               )}
                             </div>
                           </div>
@@ -3261,17 +3510,22 @@ ${transcriptionPart2}
                         {transcriptionPart2 && (
                           <div className="pt-4 border-t border-slate-100 flex items-center justify-between gap-4">
                             <button
-                              onClick={() => { setTranscriptionPart2(""); setPart2ModelInfo(null); }}
+                              onClick={() => {
+                                if (!window.confirm("Effacer la transcription du débat (Partie 2) ?\n\nLe texte, y compris vos corrections, sera perdu.")) return;
+                                setTranscriptionPart2(""); setPart2ModelInfo(null);
+                              }}
                               className="px-4 py-3 bg-slate-100 hover:bg-slate-200 text-slate-650 font-bold rounded-2xl text-xs uppercase tracking-wider transition-all cursor-pointer"
                             >
                               Effacer
                             </button>
+                            <Aide cle="po_effacerEtape" taille={14} />
                             <button
                               onClick={handleEvaluateTwoStage}
                               className="flex-1 py-4 bg-slate-900 hover:bg-black text-white font-bold rounded-2xl text-sm flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer"
                             >
                               Lancer l'Évaluation Finale <Send className="w-4 h-4" />
                             </button>
+                            <Aide cle="po_evaluationFinale" taille={18} />
                           </div>
                         )}
                       </div>
@@ -3302,6 +3556,7 @@ ${transcriptionPart2}
                 >
                   Interrompre l'évaluation
                 </button>
+                <Aide cle="partage_interrompre" taille={16} className="mt-2" />
               </motion.div>
             )}
 
@@ -3312,7 +3567,7 @@ ${transcriptionPart2}
                 level={level}
                 notationType={notationType}
                 onSendFeedback={handleSendFeedback} 
-                onDataChange={(updated) => setEvaluationResult(updated)} 
+                onDataChange={(updated) => { setEvaluationResult(updated); setResultEdited(true); }} 
                 outputFolder={outputFolder}
                 onSupervise={(forcedMode) => {
                   const targetMode = forcedMode || supervisionMode;
@@ -3345,7 +3600,7 @@ ${transcriptionPart2}
                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-8">
                   <motion.div initial={{ y: 50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="bg-white rounded-3xl w-full max-w-5xl shadow-2xl flex flex-col overflow-hidden max-h-full">
                     <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-                      <h2 className="text-xl font-bold flex items-center gap-2"><Edit3 className="w-6 h-6 text-amber-500" /> Correction OCR du lot</h2>
+                      <h2 className="text-xl font-bold flex items-center gap-2"><Edit3 className="w-6 h-6 text-amber-500" /> Correction de la transcription du lot</h2>
                       <div className="bg-white px-3 py-1 rounded-lg border font-mono text-sm shadow-sm">{pendingReviews[batchCorrectionIndex].file}</div>
                     </div>
                     
@@ -3356,7 +3611,7 @@ ${transcriptionPart2}
                            <p className="font-bold text-xl text-slate-700 animate-pulse text-center max-w-2xl leading-relaxed">{typeof loadingPhase === 'string' ? loadingPhase : loadingPhase === 1 ? `Phase 1 : Audit linguistique (Évaluateur : ${getFriendlyModelName(evalModel)})...` : loadingPhase === 2 ? `Phase 2 : Analyse qualitative (Évaluateur : ${getFriendlyModelName(evalModel)})...` : `Phase 3 : Synthèse et consolidation (Évaluateur : ${getFriendlyModelName(evalModel)})...`}</p>
                         </div>
                       ) : null}
-                      <label className="text-sm font-bold text-slate-700 mb-2 block">Texte extrait via OCR : Corrigez les erreurs avant réévaluation</label>
+                      <label className="text-sm font-bold text-slate-700 mb-2 block">Transcription de l'enregistrement : corrigez les erreurs avant de relancer l'évaluation</label>
                       <textarea 
                         value={batchCorrectionText} 
                         onChange={e => setBatchCorrectionText(e.target.value)} 
@@ -3369,6 +3624,7 @@ ${transcriptionPart2}
                       <button onClick={handleBatchCorrectionEval} disabled={isBatchCorrectingEval} className="px-8 py-3 font-bold text-white bg-blue-600 disabled:opacity-50 hover:bg-blue-700 rounded-xl shadow-lg shadow-blue-500/20 flex items-center gap-2 transition-transform active:scale-95">
                          <Send className="w-5 h-5" /> Relancer l'Analyse
                       </button>
+                      <Aide cle="partage_relancerAnalyse" taille={18} className="self-center" />
                     </div>
                   </motion.div>
                 </motion.div>
@@ -3422,7 +3678,7 @@ ${transcriptionPart2}
                         <div className="flex items-center gap-2">
                            <span>{r.status === 'error' ? '❌' : '✅'} {r.file}</span>
                         </div>
-                        {r.globalScore != null && <span className="font-bold">{formatScore(r.globalScore)}/25</span>}
+                        {r.globalScore != null && <span className="font-bold">{formatScore(r.globalScore)}/{r.maxScore ?? (examType === 'interpretation' ? customMaxScore : 25)}</span>}
                       </div>
                     ))}
                   </div>
@@ -3444,7 +3700,7 @@ ${transcriptionPart2}
                    <h3 className="text-xl font-bold flex items-center gap-2"><Mail className="text-blue-500"/> Révision avant envoi — {pendingReviews.filter(r => r.status === 'success').length} copie(s)</h3>
                    <div className="flex flex-col items-end gap-2">
                     <div className="flex items-center gap-3 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm text-[10px] font-bold">
-                      <span className="text-slate-400 uppercase tracking-wider">Actif :</span>
+                      <span className="text-slate-400 uppercase tracking-wider flex items-center gap-1">Actif : <Aide cle="po_bandeauActif" taille={13} /></span>
                       <div className="flex items-center gap-1 border-l border-slate-300 pl-3">
                         <span className="text-slate-500 uppercase">OCR</span>
                         <span className={`px-2 py-0.5 rounded-md ${ocrModel ? 'bg-blue-600 text-white' : 'bg-slate-300 text-slate-500'}`}>
@@ -3459,8 +3715,8 @@ ${transcriptionPart2}
                       </div>
                       <div className="flex items-center gap-1 border-l border-slate-300 pl-3">
                         <span className="text-slate-500 uppercase">Double éval.</span>
-                        <span className={`px-2 py-0.5 rounded-md text-white ${useDoubleEval && supervisionModel ? 'bg-blue-600' : 'bg-slate-300 text-slate-500'}`}>
-                          {useDoubleEval && supervisionModel ? getFriendlyModelName(supervisionModel, supervisionProvider) : '-'}
+                        <span className={`px-2 py-0.5 rounded-md text-white ${doubleEvalActive && supervisionModel ? 'bg-blue-600' : 'bg-slate-300 text-slate-500'}`}>
+                          {doubleEvalActive && supervisionModel ? getFriendlyModelName(supervisionModel, supervisionProvider) : '-'}
                         </span>
                       </div>
                     </div>
@@ -3484,10 +3740,12 @@ ${transcriptionPart2}
                            >
                              <Brain className="w-4 h-4 text-amber-600"/> Éval. externe en lot
                            </button>
+                           <Aide cle="evalExterneLot" taille={18} className="self-center" />
                            <button onClick={handleEvaluateAll} disabled={isEvaluatingAll} className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-sm transition-all shadow-sm hover:bg-blue-700 hover:shadow-md active:scale-95 disabled:opacity-50">
                              {isEvaluatingAll ? <Loader2 className="w-4 h-4 animate-spin"/> : <Send className="w-4 h-4"/>}
                              Lancer l'Évaluation
                            </button>
+                           <Aide cle="partage_lancerEvaluation" taille={18} className="self-center" />
                          </>
                        )}
                        {superviseUiState !== 'idle' ? (
@@ -3511,12 +3769,14 @@ ${transcriptionPart2}
                            }} className="flex items-center gap-2 px-4 py-2 bg-rose-100 text-rose-700 rounded-xl font-bold text-xs hover:bg-rose-200 transition-all border border-rose-200 shadow-sm">
                              <Square className="w-3.5 h-3.5"/> Stopper
                            </button>
+                           <Aide cle="partage_pauseStop" taille={16} />
                          </div>
                        ) : (
-                         <button onClick={handleSuperviseBatch} disabled={!pendingReviews.some(r => r.status === 'success')} className="flex items-center gap-2 px-4 py-2.5 bg-purple-100 text-purple-700 rounded-xl font-bold text-sm transition-all shadow-sm border border-purple-200 hover:bg-purple-200 hover:shadow-md active:scale-95 disabled:opacity-50">
+                         <button onClick={handleSuperviseBatch} disabled={!doubleEvalAllowed || !pendingReviews.some(r => r.status === 'success')} title={doubleEvalAllowed ? undefined : "Indisponible pour l'interprétation : la double évaluation suit la grille du DELF."} className="flex items-center gap-2 px-4 py-2.5 bg-purple-100 text-purple-700 rounded-xl font-bold text-sm transition-all shadow-sm border border-purple-200 hover:bg-purple-200 hover:shadow-md active:scale-95 disabled:opacity-50">
                            <Brain className="w-4 h-4"/> Lancer la double évaluation
                          </button>
-                       )}                     
+                       )}
+                       <Aide cle="partage_doubleEvalLot" taille={18} className="self-center" />                     
                      <button 
                        onClick={() => addFilesInputRef.current?.click()}
                        disabled={isAddingToBatch}
@@ -3525,6 +3785,7 @@ ${transcriptionPart2}
                        {isAddingToBatch ? <Loader2 className="w-4 h-4 animate-spin" /> : <FilePlus2 className="w-4 h-4" />}
                        {isAddingToBatch ? "Traitement..." : "Ajouter des copies"}
                        </button>
+                     <Aide cle="partage_ajouterCopies" taille={18} className="self-center" />
                      </div>
                      {superviseUiState !== 'idle' && activeSuperviseFile && (
                        <div className="text-xs text-purple-700 font-bold flex items-center gap-1.5 bg-purple-50 px-3 py-1.5 rounded-full border border-purple-200 shadow-sm mr-1">
@@ -3558,6 +3819,7 @@ ${transcriptionPart2}
                     <label className="text-sm font-bold text-slate-700 flex items-center gap-2">
                       <FileText className="w-4 h-4 text-blue-500"/> Sujet (Consigne) pour ce lot
                     </label>
+                    <Aide cle="partage_sujetLotRevision" taille={16} />
                     <button onClick={() => setBatchSubject("")} className="text-[10px] text-slate-400 hover:text-red-500 font-bold uppercase tracking-widest flex items-center gap-1">
                       <RotateCcw className="w-3 h-3"/> Reset
                     </button>
@@ -3595,6 +3857,7 @@ ${transcriptionPart2}
                          <p className="font-bold flex items-center gap-2 mb-2">
                            <Zap className="w-5 h-5 text-amber-600"/>
                            Attention : {unrecognized.length} étudiant(s) non reconnu(s)
+                           <Aide cle="partage_etudiantsNonReconnus" taille={16} />
                          </p>
                          <p className="text-xs mb-2">Veuillez sélectionner manuellement l'étudiant pour les fichiers suivants :</p>
                          <ul className="list-disc pl-5 text-[11px] space-y-1">
@@ -3620,15 +3883,21 @@ ${transcriptionPart2}
                              <div className="px-4 py-1.5 rounded-xl bg-slate-100 text-slate-500 font-bold text-xs flex items-center gap-2">
                                <RotateCcw className="w-3.5 h-3.5 animate-pulse" />
                                En attente d'évaluation
+                               <Aide cle="partage_enAttenteEvaluation" taille={14} />
                              </div>
                            ) : (
-                             <div className={`px-4 py-1.5 rounded-xl font-black text-lg ${item.globalScore >= 12.5 ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
-                               {formatScore(item.globalScore)}/25
+                             <div className={`px-4 py-1.5 rounded-xl font-black text-lg ${item.globalScore >= (item.maxScore ?? (examType === 'interpretation' ? customMaxScore : 25)) / 2 ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                               {formatScore(item.globalScore)}/{item.maxScore ?? (examType === 'interpretation' ? customMaxScore : 25)}
                              </div>
                            )}
                          </div>
                          {/* Notes détaillées éditables */}
-                         {item.criteriaScores && (
+                         {item.transcriptionChanged && !item.isDirty && (
+                           <div className="text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5">
+                             Texte relu : la note n'a pas été recalculée. Cliquez sur « Corriger » puis « Relancer l'Analyse » pour la mettre à jour.
+                           </div>
+                         )}
+                         {item.criteriaScores && examType !== 'interpretation' && (
                            <div className="flex flex-wrap gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
                              {Object.entries(level === 'B1' ? {
                                'Entretien': 'entretien',
@@ -3687,6 +3956,7 @@ ${transcriptionPart2}
                                  <span className="text-[10px] font-black uppercase tracking-wider">Score ajusté</span>
                                </div>
                              )}
+                             <Aide cle="partage_notesLot" taille={14} className="self-end" />
                            </div>
                          )}
                          {/* Source + Actions + Email */}
@@ -3708,40 +3978,44 @@ ${transcriptionPart2}
                                     onClick={() => handleSendIndividualEmail(i)}
                                     disabled={item.isSendingEmail || isSendingBatch || !item.studentEmail}
                                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-colors font-bold ${item.emailSent ? 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'} disabled:opacity-50`}
-                                    title={item.emailSent ? "Renvoyer l'e-mail avec le PDF" : "Envoyer l'e-mail avec le PDF"}
+                                    title={!item.studentEmail ? "Envoi impossible : saisissez d'abord l'adresse e-mail de l'élève dans la case « Email manquant » (en bas à droite de la copie)." : item.emailSent ? "Renvoyer l'e-mail avec le PDF" : "Envoyer l'e-mail avec le PDF"}
                                   >
                                     {item.isSendingEmail ? <Loader2 className="w-3.5 h-3.5 animate-spin"/> : <Send className="w-3.5 h-3.5" />}
                                     {item.emailSent ? "Renvoyer" : "Envoyer"}
                                   </button>
+                                  <Aide cle="partage_envoyerBilan" taille={14} />
                                   <button 
                                     onClick={() => handleTransferToSingleMode(i)}
                                     className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 text-amber-600 rounded-lg hover:bg-amber-100 transition-colors font-bold"
-                                    title="Retirer du lot et corriger manuellement en Mode Unique"
+                                    title="Corriger le texte lu de cette copie, puis la réévaluer (elle reste dans le lot)"
                                   >
                                     <Edit3 className="w-3.5 h-3.5" />
                                     Corriger
                                   </button>
+                                  <Aide cle="partage_corrigerCopie" taille={14} />
                                   <button 
                                     onClick={() => handleRetryOcr(i)}
                                     disabled={isRetrying === item.file + "_ocr"}
                                     className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 text-slate-600 rounded-lg hover:bg-slate-100 transition-colors font-bold disabled:opacity-50"
-                                    title="Relancer uniquement l'OCR (Gemini)"
+                                    title="Relancer uniquement la lecture / transcription de cette copie (la note n'est pas recalculée)"
                                   >
                                     {isRetrying === item.file + "_ocr" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
-                                    OCR
+                                    Relire
                                   </button>
+                                  <Aide cle="partage_relancerLecture" taille={14} />
                                   <button 
                                     onClick={() => handleSuperviseSingle(i)}
-                                    disabled={item.isSupervising || item.isSendingEmail || isGeneratingAll || isSendingBatch}
+                                    disabled={!doubleEvalAllowed || item.isSupervising || item.isSendingEmail || isGeneratingAll || isSendingBatch}
                                     className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-50 text-purple-600 rounded-lg hover:bg-purple-100 transition-colors font-bold disabled:opacity-50"
-                                    title="Double évaluation"
+                                    title={doubleEvalAllowed ? "Double évaluation" : "Indisponible pour l'interprétation : la double évaluation suit la grille du DELF."}
                                   >
                                     {item.isSupervising ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Brain className="w-3.5 h-3.5" />}
                                     Double éval.
                                   </button>
+                                  <Aide cle="partage_doubleEvalCopie" taille={14} />
                                   {item._comparison && (
                                     <button 
-                                      onClick={() => setComparisonModalData(item._comparison)}
+                                      onClick={() => { setComparisonFinalData(item); setComparisonModalData(item._comparison); }}
                                       className="flex items-center gap-1.5 px-3 py-1.5 bg-fuchsia-50 text-fuchsia-600 rounded-lg hover:bg-fuchsia-100 transition-colors font-bold shadow-sm"
                                       title="Voir les différences avec la première évaluation"
                                     >
@@ -3757,6 +4031,7 @@ ${transcriptionPart2}
                                     <Eye className="w-3.5 h-3.5" />
                                     Aperçu
                                   </button>
+                                  <Aide cle="partage_apercuPdf" taille={14} />
                                 </div>
                              </div>
                            </div>
@@ -3778,6 +4053,7 @@ ${transcriptionPart2}
                                   <option value="">-- Classe --</option>
                                   {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                                 </select>
+                                <Aide cle="partage_rattacherEleve" taille={14} />
   
                                 {item.classId && (
                                   <select 
@@ -3835,6 +4111,7 @@ ${transcriptionPart2}
                          {isRetrying !== null ? <Loader2 className="w-4 h-4 animate-spin"/> : <RefreshCcw className="w-4 h-4"/>}
                          Tout relancer
                        </button>
+                       <Aide cle="partage_relancerEchecs" taille={16} />
                      </div>
                    )}
                    {/* Erreurs */}
@@ -3868,6 +4145,7 @@ ${transcriptionPart2}
                              Garder simple
                            </button>
                          )}
+                         {item.primaryResult && <Aide cle="partage_garderSimple" taille={14} />}
                          <button 
                            onClick={() => handleRetryFile(item)} 
                            disabled={isRetrying === item.file}
@@ -3882,23 +4160,32 @@ ${transcriptionPart2}
                    ))}
                  </div>
                  <div className="flex justify-end gap-3 pt-4">
-                   <button onClick={() => { setPendingReviews([]); setBatchResults(null); }} className="px-5 py-2.5 text-slate-500 hover:text-slate-700 font-medium">Retour</button>
+                   <button onClick={() => {
+                     if (hasUnsentBatch() && !window.confirm("Revenir à l'écran de départ ?\n\nLe lot affiché contient des bilans non envoyés ou des notes ajustées : ils disparaîtront de l'écran (« Récupérer le dernier lot évalué » permet de retrouver la dernière sauvegarde automatique).")) return;
+                     setPendingReviews([]); setBatchResults(null);
+                   }} className="px-5 py-2.5 text-slate-500 hover:text-slate-700 font-medium">Retour</button>
+                   <Aide cle="partage_retourLot" taille={16} className="self-center" />
                    <button onClick={handleGenerateAllPdfs} disabled={isGeneratingAll} className="px-6 py-3 bg-slate-100 text-slate-700 rounded-xl font-bold flex items-center gap-2 hover:bg-slate-200 transition-colors border border-slate-200">
                      {isGeneratingAll ? <Loader2 className="w-4 h-4 animate-spin"/> : <FileText className="w-4 h-4"/>} Générer PDFs
                    </button>
+                   <Aide cle="partage_apercuPdf" taille={16} className="self-center" />
                    <button onClick={handleExportExcel} className="px-6 py-3 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl font-bold flex items-center gap-2 hover:bg-emerald-100 transition-colors shadow-sm">
                      <FileSpreadsheet className="w-4 h-4"/> Exporter Excel
                    </button>
+                   <Aide cle="partage_exportExcel" taille={16} className="self-center" />
                    {externalBatchTasks().length > 0 && (
+                     <>
                      <button onClick={() => openExternalSupervision('batch', externalBatchTasks())} className="px-6 py-3 bg-violet-50 text-violet-700 border border-violet-200 rounded-xl font-bold flex items-center gap-2 hover:bg-violet-100 transition-colors shadow-sm" title="Double évaluation par IA externe, sans clé API">
                        <Brain className="w-4 h-4"/> Double éval externe
                      </button>
+                     <Aide cle="doubleEvalExterneLot" taille={18} className="self-center" />
+                     </>
                    )}
                     {pendingReviews.some(r => r.status === 'error' && (!r.transcription || !r.transcription.trim())) && (
                       <button
                         onClick={() => {
                           const failed = pendingReviews.filter(r => r.status === 'error' && (!r.transcription || !r.transcription.trim()));
-                          handlePrepareExternalBatch('ocr', failed.map(r => ({ file: r.file, filePath: `${batchFolder}\\${r.file}`, subject: r.subject || batchSubject || 'Sujet' })));
+                          handlePrepareExternalBatch('ocr', failed.map(r => ({ file: r.file, filePath: joinPath(batchFolder, r.file), subject: r.subject || batchSubject || 'Sujet' })));
                         }}
                         disabled={isExternalBatchLoading}
                         className="px-5 py-3 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl font-bold flex items-center gap-2 hover:bg-amber-100 transition-colors shadow-sm cursor-pointer"
@@ -3911,7 +4198,7 @@ ${transcriptionPart2}
                       <button
                         onClick={() => {
                           const failed = pendingReviews.filter(r => r.status === 'error' && r.transcription);
-                          handlePrepareExternalBatch('eval', failed.map(r => ({ file: r.file, filePath: `${batchFolder}\\${r.file}`, transcription: r.transcription, subject: r.subject || batchSubject || 'Sujet' })));
+                          handlePrepareExternalBatch('eval', failed.map(r => ({ file: r.file, filePath: joinPath(batchFolder, r.file), transcription: r.transcription, subject: r.subject || batchSubject || 'Sujet' })));
                         }}
                         disabled={isExternalBatchLoading}
                         className="px-5 py-3 bg-rose-50 text-rose-700 border border-rose-200 rounded-xl font-bold flex items-center gap-2 hover:bg-rose-100 transition-colors shadow-sm cursor-pointer"
@@ -3921,16 +4208,18 @@ ${transcriptionPart2}
                       </button>
                     )}
                     <button
-                      onClick={() => handleImportExternalBatch(pendingReviews.some(r => r.status === 'error' && (!r.transcription || !r.transcription.trim())) ? 'ocr' : (pendingReviews.some(r => r.status === 'error') ? 'eval' : 'supervision'))}
+                      onClick={() => handleImportExternalBatch(reviewImportType)}
                       disabled={isExternalBatchLoading}
                       className="px-5 py-3 bg-purple-50 text-purple-700 border border-purple-200 rounded-xl font-bold flex items-center gap-2 hover:bg-purple-100 transition-colors shadow-sm cursor-pointer"
-                      title="Importer automatiquement les fichiers produits par Claude / ChatGPT Desktop dans le sous-dossier livrables"
+                      title={"Importer automatiquement les fichiers produits par Claude / ChatGPT Desktop dans le sous-dossier livrables. Ce bouton va importer : " + reviewImportLabel + "."}
                     >
-                      {isExternalBatchLoading ? <Loader2 className="w-4 h-4 animate-spin"/> : <FolderOpen className="w-4 h-4"/>} Importer livrables Desktop
+                      {isExternalBatchLoading ? <Loader2 className="w-4 h-4 animate-spin"/> : <FolderOpen className="w-4 h-4"/>} Importer livrables Desktop ({reviewImportLabel})
                     </button>
+                    <Aide cle="partage_livrablesDesktop" taille={16} className="self-center" />
                    <button onClick={handleSendBatchEmails} disabled={isSendingBatch} className="px-8 py-3 bg-blue-600 text-white rounded-xl font-bold flex items-center gap-2 hover:bg-blue-700 shadow-lg shadow-blue-500/20">
-                     {isSendingBatch && <Loader2 className="w-4 h-4 animate-spin"/>} {pendingReviews.some(r => r.status === 'success' && r.emailSent) && pendingReviews.some(r => r.status === 'success' && !r.emailSent) ? "Envoyer les emails restants" : "Envoyer les e-mails"}
+                     {isSendingBatch && <Loader2 className="w-4 h-4 animate-spin"/>} {pendingReviews.some(r => r.status === 'success' && r.emailSent) && pendingReviews.some(r => r.status === 'success' && !r.emailSent) ? "Envoyer les e-mails restants" : "Envoyer les e-mails"}
                    </button>
+                   <Aide cle="partage_envoyerEmails" taille={18} className="self-center" />
                  </div>
                </motion.div>
             )}
@@ -3958,7 +4247,7 @@ ${transcriptionPart2}
                       {examType.toUpperCase()}
                     </span>
                     <span className="px-3 py-1 bg-white border border-slate-200 text-slate-600 rounded-xl text-xs font-semibold shadow-xs">
-                      Note sur {examType === 'interpretation' ? customMaxScore : '25'} pts
+                      Note sur {examType === 'interpretation' ? customMaxScore : 25} pts
                     </span>
                   </div>
                 </div>
@@ -3987,6 +4276,7 @@ ${transcriptionPart2}
                         <label className="text-sm font-bold text-slate-800">
                           Sujet commun de l'épreuve orale DELF {level} (Optionnel)
                         </label>
+                        <Aide cle="partage_sujetLot" taille={16} />
                       </div>
                       <div className="flex items-center gap-2">
                         {subject && subject.trim() !== batchSubject.trim() && (
@@ -4034,8 +4324,8 @@ ${transcriptionPart2}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-1.5">
                       <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
-                        <span>📂 Dossier Source (Enregistrements audio)</span>
-                        <span className="text-[10px] text-slate-400 font-normal">MP3, WAV, M4A, OGG</span>
+                        <span className="flex items-center gap-1">📂 Dossier Source (Enregistrements audio) <Aide cle="partage_dossierSource" taille={14} /></span>
+                        <span className="text-[10px] text-slate-400 font-normal">{FORMATS_AUDIO_TEXTE}</span>
                       </label>
                       <div className="flex gap-2">
                         <input
@@ -4057,7 +4347,7 @@ ${transcriptionPart2}
 
                     <div className="space-y-1.5">
                       <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
-                        <span>📂 Dossier Sortie (Bilans & PDFs)</span>
+                        <span className="flex items-center gap-1">📂 Dossier Sortie (Bilans & PDFs) <Aide cle="partage_dossierSortie" taille={14} /></span>
                         <span className="text-[10px] text-slate-400 font-normal">Export automatique</span>
                       </label>
                       <div className="flex gap-2">
@@ -4081,7 +4371,7 @@ ${transcriptionPart2}
 
                   <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
                     <div>
-                      <p className="font-bold text-sm text-slate-800">Envoi direct par e-mail</p>
+                      <p className="font-bold text-sm text-slate-800 flex items-center gap-1.5">Envoi direct par e-mail <Aide cle="partage_envoiDirect" taille={14} /></p>
                       <p className="text-xs text-slate-500">Si activé, les bilans PDF seront envoyés aux apprenants automatiquement sans écran de revue préalable.</p>
                     </div>
                     <button
@@ -4104,6 +4394,7 @@ ${transcriptionPart2}
                         {isBatchLoading ? <Loader2 className="w-5 h-5 animate-spin"/> : <Zap className="w-5 h-5"/>}
                         {isBatchLoading ? "Évaluation du lot en cours..." : "Lancer le lot complet"}
                       </button>
+                      <Aide cle="partage_lancerLot" taille={18} className="self-center" />
                       <button 
                         onClick={() => handleStartBatch(true)} 
                         disabled={isBatchLoading}
@@ -4113,19 +4404,24 @@ ${transcriptionPart2}
                         <Eye className="w-5 h-5"/>
                         Transcription seule
                       </button>
+                      <Aide cle="partage_lectureSeule" taille={18} className="self-center" />
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="flex items-center gap-2">
                       <button 
                         onClick={handleResumeLastBatch} 
                         disabled={isBatchLoading}
-                        className="py-3 bg-white text-blue-600 border-2 border-blue-100 rounded-2xl font-bold hover:bg-blue-50 transition-colors disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+                        className="flex-1 py-3 bg-white text-blue-600 border-2 border-blue-100 rounded-2xl font-bold hover:bg-blue-50 transition-colors disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer shadow-xs"
                       >
                         <RotateCcw className="w-4 h-4"/>
                         Récupérer le dernier lot évalué
                       </button>
+                      <Aide cle="partage_dernierLot" taille={18} />
+                      </div>
 
-                      <label className="py-3 bg-white text-indigo-600 border-2 border-indigo-100 rounded-2xl font-bold hover:bg-indigo-50 transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-xs">
+                      <div className="flex items-center gap-2">
+                      <label className="flex-1 py-3 bg-white text-indigo-600 border-2 border-indigo-100 rounded-2xl font-bold hover:bg-indigo-50 transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-xs">
                         <Database className="w-4 h-4 text-indigo-600"/>
                         Charger un lot sauvegardé (.json)
                         <input
@@ -4135,6 +4431,8 @@ ${transcriptionPart2}
                           onChange={handleLoadBatchFile}
                         />
                       </label>
+                      <Aide cle="partage_chargerLot" taille={18} />
+                      </div>
                     </div>
 
                     {/* Bloc Automatisation Externe (Claude / ChatGPT Desktop) */}
@@ -4142,10 +4440,16 @@ ${transcriptionPart2}
                       <div className="flex items-center gap-2 text-violet-800 font-bold text-sm">
                         <Sparkles className="w-4 h-4 text-violet-600" />
                         <span>Automatisation Externe (Claude / ChatGPT Desktop)</span>
+                        <Aide cle="automatisationExterne" />
                       </div>
                       <p className="text-xs text-violet-700/80 leading-relaxed">
                         Déléguez la transcription ou la correction à vos applications de bureau ayant accès aux fichiers de l'ordinateur, sans clé API.
                       </p>
+                      <ol className="text-[11px] text-violet-800/80 leading-snug list-decimal pl-4 space-y-0.5">
+                        <li>Choisissez le dossier du lot, puis « Préparer… » : un fichier CONSIGNES.md est créé dans un dossier d'échange (_ECHANGE_IA).</li>
+                        <li>Donnez CONSIGNES.md à votre application d'IA de bureau : elle dépose ses résultats dans le sous-dossier « livrables ».</li>
+                        <li>Revenez ici et cliquez sur « Importer livrables ».</li>
+                      </ol>
                       <div className="grid grid-cols-2 gap-2 pt-1">
                         <button
                           onClick={() => handlePrepareExternalBatch('ocr')}
@@ -4165,7 +4469,7 @@ ${transcriptionPart2}
                         </button>
                       </div>
                       <button
-                        onClick={() => handleImportExternalBatch('eval')}
+                        onClick={() => handleImportExternalBatch(lastExternalTaskType)}
                         disabled={isExternalBatchLoading}
                         className="w-full py-2.5 px-3 bg-violet-600 text-white rounded-xl text-xs font-bold hover:bg-violet-700 flex items-center justify-center gap-2 transition-colors shadow-md shadow-violet-500/20 disabled:opacity-50 cursor-pointer"
                         title="Importe automatiquement en 1 clic les fichiers générés dans livrables"
@@ -4173,6 +4477,7 @@ ${transcriptionPart2}
                         {isExternalBatchLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin"/> : <FolderOpen className="w-3.5 h-3.5" />}
                         Importer livrables Desktop
                       </button>
+                      <p className="text-[10px] text-violet-700/70 text-center">Récupère les résultats de la dernière préparation : {lastExternalTaskType === 'ocr' ? 'transcription' : 'correction'}.</p>
                     </div>
                   </div>
                 </div>
@@ -4211,6 +4516,7 @@ ${transcriptionPart2}
         comparisonModalData={comparisonModalData}
         setComparisonModalData={setComparisonModalData}
         level={level}
+        finalData={comparisonFinalData}
       />
 
       {/* Recovery Modal for Supervision failure */}

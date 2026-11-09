@@ -6,6 +6,11 @@ import path from 'path';
 // @ts-expect-error NodeMailer lacks full types here without @types/nodemailer
 import nodemailer from 'nodemailer';
 
+const AUDIO_EXTENSIONS = ['.mp3', '.wav', '.m4a', '.ogg', '.webm', '.aac', '.flac', '.caf'];
+function isAudioFile(fileName: string): boolean {
+  return AUDIO_EXTENSIONS.includes(path.extname(fileName).toLowerCase());
+}
+
 function getMimeType(fileName: string): string {
   const ext = path.extname(fileName).toLowerCase();
   switch (ext) {
@@ -52,7 +57,9 @@ export async function POST(req: Request) {
       sourceLanguage,
       targetLanguage,
       criteria,
-      customInstructions
+      customInstructions,
+      emailSubject,
+      emailBody
     } = await req.json();
     
     if (!folderPath) {
@@ -63,15 +70,24 @@ export async function POST(req: Request) {
     const outputDir = outputFolderPath || path.join(process.cwd(), 'data/outputs');
     if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 
-    const files = fs.readdirSync(inputDir)
+    if (!fs.existsSync(inputDir)) {
+      return new Response(JSON.stringify({ error: "Le dossier source est introuvable : " + inputDir }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+    }
+
+    const allFiles = fs.readdirSync(inputDir)
       .filter(f => !f.startsWith('.'))
       .map(f => { const fullPath = path.join(inputDir, f); const stat = fs.statSync(fullPath); return { name: f, st: stat }; })
       .filter(item => !item.st.isDirectory())
       .sort((a, b) => a.st.mtimeMs - b.st.mtimeMs)
       .map(item => item.name);
 
+    // Seuls les enregistrements audio sont traités : tout autre fichier (Word, Thumbs.db...) serait envoyé à l'IA pour rien.
+    const files = allFiles.filter(isAudioFile);
+    const ignoredFiles = allFiles.filter(f => !isAudioFile(f));
+
     if (files.length === 0) {
-      return new Response(JSON.stringify({ error: "Aucun fichier trouvé dans le dossier source." }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+      const detail = ignoredFiles.length > 0 ? " " + ignoredFiles.length + " fichier(s) ignoré(s) car ce ne sont pas des enregistrements audio (" + AUDIO_EXTENSIONS.join(', ') + ")." : "";
+      return new Response(JSON.stringify({ error: "Aucun enregistrement audio trouvé dans le dossier source." + detail }), { status: 400, headers: { 'Content-Type': 'application/json' } });
     }
 
     let transporter = null;
@@ -83,13 +99,14 @@ export async function POST(req: Request) {
     }
 
     const { searchParams } = new URL(req.url);
-    const useDoubleEval = searchParams.get('useDoubleEval') === 'true';
+    // La double évaluation suit la grille DELF : jamais appliquée à l'interprétation.
+    const useDoubleEval = searchParams.get('useDoubleEval') === 'true' && examType !== 'interpretation';
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
         const send = (data: any) => { controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`)); };
         const batchMode = ocrOnly ? 'ocr' : (useDoubleEval && supervisionProvider && supervisionModel) ? 'ocr+eval+jury' : 'ocr+eval';
-        send({ type: 'start', totalFiles: files.length });
+        send({ type: 'start', totalFiles: files.length, ignoredFiles });
         const results: any[] = [];
         let lastKey = '';
 
@@ -241,8 +258,9 @@ export async function POST(req: Request) {
                   await transporter.sendMail({
                     from: `"Évaluation DELF" <${emailUser}>`,
                     to: recipient,
-                    subject: subjectHeader,
-                    text: `Bonjour,\n\n${bodyIntro}\n\nBien cordialement,\n\n${signature}`,
+                    // Même modèle d'e-mail (objet et corps) que l'envoi manuel, s'il est fourni.
+                    subject: (typeof emailSubject === 'string' && emailSubject.trim()) ? emailSubject : subjectHeader,
+                    text: (typeof emailBody === 'string' && emailBody.trim()) ? emailBody : `Bonjour,\n\n${bodyIntro}\n\nBien cordialement,\n\n${signature}`,
                     attachments: [{ filename: path.basename(pdfPath), content: pdfBuffer }],
                   });
                   emailSent = true;
@@ -300,7 +318,7 @@ export async function GET(req: Request) {
     if (!folder || !fs.existsSync(folder)) {
       return Response.json({ files: [] });
     }
-    const files = fs.readdirSync(folder)
+    const all = fs.readdirSync(folder)
       .filter(f => !f.startsWith('.'))
       .filter(f => {
         try {
@@ -309,7 +327,10 @@ export async function GET(req: Request) {
           return false;
         }
       });
-    return Response.json({ files });
+    // Seuls les enregistrements audio sont proposés ; les autres fichiers sont signalés comme ignorés.
+    const files = all.filter(isAudioFile);
+    const ignored = all.filter(f => !isAudioFile(f));
+    return Response.json({ files, ignored });
   } catch (err: any) {
     return Response.json({ error: err.message }, { status: 500 });
   }

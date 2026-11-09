@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { Database, Trash2, Calendar, Loader2, RefreshCw, AlertTriangle, Key, Mail, Lock, ShieldAlert } from "lucide-react";
 import { motion } from "framer-motion";
+import Aide from "@/components/Aide";
 
 interface Props {
   apiKeys: any;
@@ -32,10 +33,11 @@ export default function MaintenanceView({
   const [showPurgeModal, setShowPurgeModal] = useState(false);
   const [isTestingEmail, setIsTestingEmail] = useState(false);
   
-  // Default date to today
+  // Date proposée par défaut : il y a 6 mois (on ne propose jamais « aujourd'hui », qui viderait tout).
   const [selectedDate, setSelectedDate] = useState(() => {
-    const today = new Date();
-    return today.toISOString().split("T")[0];
+    const d = new Date();
+    d.setMonth(d.getMonth() - 6);
+    return d.toISOString().split("T")[0];
   });
 
   useEffect(() => {
@@ -69,7 +71,9 @@ export default function MaintenanceView({
     if (!selectedDate) return alert("Veuillez choisir une date.");
     
     // Safety confirm
-    const confirmMsg = `Voulez-vous VRAIMENT supprimer toutes les copies et historiques générés AVANT le ${new Date(selectedDate).toLocaleDateString()} ? Cette action est irréversible.`;
+    const confirmMsg = `Supprimer tout ce qui a été produit AVANT le ${new Date(selectedDate).toLocaleDateString()} : bilans PDF et fichiers du dossier de sortie de l'application, évaluations enregistrées et fiches de l'historique ?
+
+Sous Windows, les fichiers vont dans la Corbeille et peuvent être restaurés. Sur Mac, la suppression est définitive.`;
     if (!confirm(confirmMsg)) return;
 
     setIsDeleting(true);
@@ -155,9 +159,10 @@ export default function MaintenanceView({
             {/* GESTION DES CLÉS API */}
             <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-6">
               <div className="flex items-center justify-between gap-4">
-                <h3 className="text-lg font-bold flex items-center gap-2 text-slate-800"><Key className="w-5 h-5 text-blue-500"/> Gestion des Clés API</h3>
+                <h3 className="text-lg font-bold flex items-center gap-2 text-slate-800"><Key className="w-5 h-5 text-blue-500"/> Gestion des Clés API <Aide cle="c_paramSauvegardeAuto" taille={16} /></h3>
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider whitespace-nowrap">Mode :</span>
+                  <Aide cle="c_paramModeCles" taille={14} />
                   <select 
                     value={keyMode}
                     onChange={e => setKeyMode(e.target.value as 'free_only' | 'paid_only' | 'both')}
@@ -182,12 +187,18 @@ export default function MaintenanceView({
                     className="w-full bg-white border border-slate-200 rounded-xl p-3 text-[11px] h-24 focus:ring-2 focus:ring-blue-500/20 outline-none resize-none font-mono" 
                     placeholder="Clés Gratuites (une par ligne)"
                   />
+                  <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase">
+                    Clés gratuites et clé payante <Aide cle="c_paramClesGratuites" taille={13} /> <Aide cle="c_paramClePayante" taille={13} />
+                  </div>
                   <input 
                     value={apiKeys.gemini.paidKey} 
                     onChange={e => setApiKeys((prev: any) => ({ ...prev, gemini: { ...prev.gemini, paidKey: e.target.value } }))}
                     className="w-full bg-white border border-slate-200 rounded-xl p-3 text-[11px] focus:ring-2 focus:ring-blue-500/20 outline-none font-mono" 
                     placeholder="Clé Payante (optionnel)"
                   />
+                  <p className="text-[10px] text-slate-500 italic leading-snug">
+                    Les clés et le mot de passe de messagerie sont mémorisés automatiquement dans ce navigateur, sur cet ordinateur (sans bouton « Enregistrer »). Sur un ordinateur partagé, effacez-les en fin de séance.
+                  </p>
                 </div>
               </div>
             </div>
@@ -195,7 +206,7 @@ export default function MaintenanceView({
             <div className="space-y-8">
               {/* CONFIGURATION EMAIL */}
               <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4">
-                <h3 className="text-lg font-bold flex items-center gap-2 text-slate-800"><Mail className="w-5 h-5 text-indigo-500"/> Serveur d'Envoi (Gmail)</h3>
+                <h3 className="text-lg font-bold flex items-center gap-2 text-slate-800"><Mail className="w-5 h-5 text-indigo-500"/> Serveur d'Envoi (Gmail) <Aide cle="c_paramEmail" taille={16} /></h3>
                 <p className="text-sm text-slate-500">Configurez l'adresse qui expédiera les bilans aux élèves.</p>
                 
                 <div className="space-y-4 pt-2">
@@ -241,7 +252,7 @@ export default function MaintenanceView({
                   </div>
 
                   <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase px-1">Signature d'e-mail</label>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase px-1 flex items-center gap-1.5">Signature d'e-mail <Aide cle="c_paramSignature" taille={13} /></label>
                     <input 
                       type="text"
                       value={signature ?? "L'équipe pédagogique"}
@@ -262,6 +273,7 @@ export default function MaintenanceView({
                   <h3 className="text-lg font-bold flex items-center gap-2 text-slate-800"><Trash2 className="w-5 h-5 text-rose-500"/> Purge de l'Espace</h3>
                   <div className="bg-slate-50 px-3 py-1 rounded-full border border-slate-100 flex items-center gap-2">
                     <span className="text-[10px] font-black text-slate-400 uppercase">Utilisé:</span>
+                    <Aide cle="c_paramEspace" taille={13} />
                     <span className="text-[11px] font-bold text-slate-700">{stats ? formatBytes(stats.totalBytes) : '...'}</span>
                     <button onClick={fetchStats} className="ml-1 text-slate-400 hover:text-blue-500"><RefreshCw className={`w-3 h-3 ${isLoading ? 'animate-spin' : ''}`}/></button>
                   </div>
@@ -269,7 +281,7 @@ export default function MaintenanceView({
                 
                 <div className="space-y-4 pt-2">
                    <div className="flex flex-col gap-2">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase px-1">Tout nettoyer AVANT le :</label>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase px-1 flex items-center gap-1.5">Tout nettoyer AVANT le : <Aide cle="c_paramNettoyer" taille={13} /></label>
                     <div className="flex items-center gap-4">
                        <input 
                          type="date" 
@@ -294,7 +306,7 @@ export default function MaintenanceView({
                       <div className="flex items-start gap-3">
                         <ShieldAlert className="w-5 h-5 text-red-500 mt-0.5 flex-shrink-0" />
                         <div>
-                          <p className="text-sm font-bold text-red-700">Purge complète de l'application</p>
+                          <p className="text-sm font-bold text-red-700 flex items-center gap-1.5">Purge complète de l'application <Aide cle="c_paramPurge" taille={14} /></p>
                           <p className="text-[11px] text-red-500 mt-0.5">Supprime <strong>toutes</strong> les évaluations, rapports PDF, fichiers image et textes et l'historique. Les données sont envoyées à la corbeille Windows.</p>
                         </div>
                       </div>

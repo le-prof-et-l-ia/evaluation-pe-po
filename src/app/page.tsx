@@ -6,6 +6,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import EvaluationResultView, { EvaluationData } from "@/components/EvaluationResultView";
 import FolderPicker from "@/components/FolderPicker";
 import ClassManager from "@/components/ClassManager";
+import Aide from "@/components/Aide";
+import { usePersistentState } from "@/hooks/usePersistentState";
 import MaintenanceView from "@/components/MaintenanceView";
 import HistoryView from "@/components/HistoryView";
 import SubjectGeneratorView from "@/components/SubjectGeneratorView";
@@ -25,6 +27,7 @@ import SupervisionRecoveryModal from "@/components/SupervisionRecoveryModal";
 import HeaderNav from "@/components/HeaderNav";
 import CustomExamConfigPanel from "@/components/CustomExamConfigPanel";
 import { getDictationOcrPrompt } from "@/lib/dicteeEngine";
+import { getFriendlyErrorMessage } from "@/lib/errorMessages";
 
 export default function Home() {
   const [isShutdown, setIsShutdown] = useState(false);
@@ -81,7 +84,11 @@ export default function Home() {
 
       console.error('[Erreur Promise Client] :', reason);
       if (msg && msg !== '[object Object]' && msg !== '[object Event]') {
-        alert(`[Erreur Promise Client] : ${msg}`);
+        const msgMin = msg.toLowerCase();
+        const erreurReseau = msgMin.includes('failed to fetch') || msgMin.includes('networkerror') || msgMin.includes('load failed');
+        alert(erreurReseau
+          ? "Le serveur local ne répond plus. Vérifiez que l'application est toujours lancée, puis réessayez (relancez-la si besoin)."
+          : `Une erreur inattendue s'est produite : ${getFriendlyErrorMessage(msg)}`);
       }
     };
     window.addEventListener('error', handleError);
@@ -95,6 +102,8 @@ export default function Home() {
   const addFilesInputRef = useRef<HTMLInputElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const ocrAbortControllerRef = useRef<AbortController | null>(null);
+  // Nom du dernier PDF créé pour chaque copie du lot : un nouvel envoi / une nouvelle génération le remplace au lieu d'en créer un autre.
+  const pdfNamesRef = useRef<Record<string, { folder: string; name: string }>>({});
   const [supervisionFailure, setSupervisionFailure] = useState<{
     errorMsg: string;
     primaryResult: any;
@@ -150,6 +159,8 @@ export default function Home() {
   const [externalContext, setExternalContext] = useState<'single' | 'batch'>('single');
   const [externalMode, setExternalMode] = useState<'initial' | 'supervision'>('supervision');
   const [isExternalBatchLoading, setIsExternalBatchLoading] = useState(false);
+  // Type de la dernière préparation « Automatisation externe » : l'import cherche les livrables correspondants.
+  const [lastExternalTaskType, setLastExternalTaskType] = usePersistentState<'ocr' | 'eval'>('pe_lastExternalTaskType', 'eval');
   // Incrémenté à chaque remplacement du résultat affiché (supervision) pour
   // forcer le remontage de EvaluationResultView et éviter un affichage figé.
   const [evalResultVersion, setEvalResultVersion] = useState(0);
@@ -208,6 +219,7 @@ export default function Home() {
   const [isRetrying, setIsRetrying] = useState<string | null>(null);
   const [isAddingToBatch, setIsAddingToBatch] = useState(false);
   const [comparisonModalData, setComparisonModalData] = useState<any>(null);
+  const [comparisonFinalData, setComparisonFinalData] = useState<any>(null);
   // Persistence for batch results
   useEffect(() => {
     localStorage.setItem("delf_pending_reviews", JSON.stringify(pendingReviews));
@@ -248,6 +260,10 @@ export default function Home() {
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
+    if (text.trim() && !window.confirm("La zone de copie contient déjà du texte. Le texte lu à partir des fichiers choisis va le remplacer.\n\nContinuer ?")) {
+      e.target.value = '';
+      return;
+    }
     
     // Sort by lastModified (oldest first)
     files.sort((a, b) => a.lastModified - b.lastModified);
@@ -354,6 +370,7 @@ export default function Home() {
   };
 
   const handleSuperviseResultWithState = async (primaryResult: any) => {
+    if (!doubleEvalSupported) { alert(DOUBLE_EVAL_DELF_ONLY_MSG); return; }
     setIsLoading(true);
     setIsSupervisingSingle(true);
     setLoadingPhase(21);
@@ -375,6 +392,7 @@ export default function Home() {
           subject: subject || "Sujet",
           language,
           level,
+          examType,
           evalModel,
           supervisionProvider,
           supervisionModel,
@@ -422,7 +440,63 @@ export default function Home() {
     }
   };
 
+  // L'évaluation par IA externe (consignes, double évaluation, automatisation de bureau)
+  // ne connaît que la grille DELF : on la bloque pour les autres épreuves plutôt que
+  // de produire une évaluation DELF d'une dictée, d'une traduction ou d'une interprétation.
+  const externalEvalSupported = examType === 'delf_b1' || examType === 'delf_b2';
+  const EXTERNAL_UNSUPPORTED_MSG = "L'évaluation par une IA externe (sans clé API) ne prend en charge pour l'instant que le DELF B1 et B2 : ses consignes suivent la grille du DELF.\n\nPour cette épreuve (dictée, traduction, grammaire, composition…), utilisez la correction avec une clé Gemini (« Analyser » ou « Lancer le lot complet »).";
+
+  // La double évaluation (case à cocher + choix « Dans l'appli / IA externe ») suit la grille du DELF :
+  // elle n'existe pas pour la dictée, la traduction, la grammaire ni la composition.
+  const doubleEvalSupported = externalEvalSupported;
+  const doubleEvalActive = useDoubleEval && doubleEvalSupported;
+  const DOUBLE_EVAL_DELF_ONLY_MSG = "La double évaluation est disponible pour le DELF B1 et B2 uniquement : sa grille de contrôle est celle du DELF. Pour cette épreuve, la première évaluation est conservée.";
+
+  // Barème réel d'une copie : 25 pour le DELF ; pour une épreuve personnalisée, celui du résultat, sinon celui du panneau.
+  const getMaxScoreOf = (r?: any): number => {
+    if (examType === 'delf_b1' || examType === 'delf_b2') return 25;
+    const propre = Number(r?.maxScore);
+    return propre > 0 ? propre : customMaxScore;
+  };
+
+  // Assemble un dossier et un nom de fichier avec le séparateur du système (« / » si le dossier en contient déjà, sinon « \ »).
+  const joinPath = (dir: string, name: string): string => {
+    if (!dir) return name;
+    if (dir.endsWith('/') || dir.endsWith('\\')) return `${dir}${name}`;
+    return `${dir}${dir.includes('/') ? '/' : '\\'}${name}`;
+  };
+
+  // Nom du PDF déjà créé pour cette copie (s'il est dans le dossier de sortie actuel) : l'envoi / la génération le remplace.
+  const pdfKey = (item: any) => `${item?.file ?? ''}|${item?.studentName ?? ''}|${item?.studentEmail ?? ''}`;
+  const replaceNameFor = (item: any): string | undefined => {
+    const connu = pdfNamesRef.current[pdfKey(item)];
+    return connu && connu.folder === outputFolder ? connu.name : undefined;
+  };
+  const rememberPdfName = (item: any, name: string) => {
+    if (name) pdfNamesRef.current[pdfKey(item)] = { folder: outputFolder, name };
+  };
+  const readPdfFileName = (res: Response): string => {
+    const cd = res.headers.get('Content-Disposition');
+    if (cd && cd.includes('filename="')) {
+      try { return decodeURIComponent(cd.split('filename="')[1].split('"')[0]); } catch { /* nom illisible */ }
+    }
+    return '';
+  };
+
+  // Copies du lot affiché qui disparaîtraient de l'écran (bilans non envoyés, notes ajustées à la main) :
+  // renvoie true s'il n'y a rien à perdre ou si l'utilisateur confirme.
+  const confirmerAbandonLot = (action: string): boolean => {
+    const nonEnvoyes = pendingReviews.filter(r => r.status === 'success' && !r.isOcrOnly && !r.emailSent);
+    const ajustees = nonEnvoyes.filter(r => r.scoreAdjusted).length;
+    if (nonEnvoyes.length === 0) return true;
+    let msg = `Le lot actuellement affiché contient ${nonEnvoyes.length} copie(s) évaluée(s) dont le bilan n'a pas été envoyé`;
+    msg += ajustees > 0 ? `, dont ${ajustees} aux notes ajustées à la main.` : '.';
+    msg += `\n\n${action} va vider ce lot de l'écran : les notes ajustées et les bilans non envoyés ne seront plus disponibles ici (les évaluations déjà enregistrées restent dans l'Historique).\n\nContinuer ?`;
+    return window.confirm(msg);
+  };
+
   const openExternalInitial = (context: 'single' | 'batch', tasks: any[]) => {
+    if (!externalEvalSupported) { alert(EXTERNAL_UNSUPPORTED_MSG); return; }
     if (tasks.length === 0) {
       alert("Aucune copie à soumettre à l'évaluation externe.");
       return;
@@ -434,6 +508,7 @@ export default function Home() {
   };
 
   const openExternalSupervision = (context: 'single' | 'batch', tasks: ExternalSupervisionTask[]) => {
+    if (!externalEvalSupported) { alert(EXTERNAL_UNSUPPORTED_MSG + "\n\nLa première évaluation est conservée."); return; }
     if (tasks.length === 0) {
       alert("Aucune copie à soumettre à la double évaluation externe.");
       return;
@@ -446,6 +521,7 @@ export default function Home() {
 
   // ─── Automatisation Externe par Lot (Claude / ChatGPT Desktop) ───
   const handlePrepareExternalBatch = async (taskType: 'ocr' | 'eval' | 'supervision', itemsOverride?: any[]) => {
+    if (taskType !== 'ocr' && !externalEvalSupported) { alert(EXTERNAL_UNSUPPORTED_MSG); return; }
     try {
       setIsExternalBatchLoading(true);
       let itemsToPrepare: any[] = [];
@@ -463,15 +539,15 @@ export default function Home() {
         }
         itemsToPrepare = files.map(f => ({
           file: f,
-          filePath: `${batchFolder}\\${f}`,
+          filePath: joinPath(batchFolder, f),
           subject: batchSubject || subject || 'Sujet'
         }));
       } else if (taskType === 'supervision') {
         itemsToPrepare = pendingReviews
-          .filter(r => r.status === 'success' && !r.isOcrOnly)
+          .filter(r => r.status === 'success' && !r.isOcrOnly && !r._comparison)
           .map(r => ({
             file: r.file,
-            filePath: `${batchFolder}\\${r.file}`,
+            filePath: joinPath(batchFolder, r.file),
             subject: r.subject || batchSubject || subject || 'Sujet',
             transcription: r.transcription || '',
             result1: r
@@ -489,8 +565,9 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           taskType,
-          exchangeFolder: outputFolder ? `${outputFolder}\\_ECHANGE_IA` : undefined,
+          exchangeFolder: outputFolder ? joinPath(outputFolder, '_ECHANGE_IA') : undefined,
           items: itemsToPrepare,
+          examType,
           config: {
             level,
             language,
@@ -503,6 +580,7 @@ export default function Home() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Erreur lors de la préparation.");
       showToast(`Dossier d'échange préparé (${data.totalItems} copies).`, "Automatisation Externe");
+      if (taskType === 'ocr' || taskType === 'eval') setLastExternalTaskType(taskType);
       alert(` Dossier d'échange préparé pour Claude / ChatGPT Desktop !\n\nEmplacement : ${data.exchangeFolder}\nFichier de consignes : ${data.instructionsPath}\n\n1. Ouvrez l'application IA de bureau (Claude ou ChatGPT avec accès disque local).\n2. Donnez-lui le fichier CONSIGNES.md (ou glissez le dossier).\n3. L'IA produira les livrables dans le sous-dossier 'livrables'.\n4. Une fois terminé, cliquez sur "Importer livrables externes".`);
     } catch (err: any) {
       alert(`Erreur : ${err.message || 'Impossible de préparer le lot externe'}`);
@@ -520,7 +598,7 @@ export default function Home() {
       } else if (pendingReviews.length > 0) {
         itemsToExpect = pendingReviews.map(r => ({
           file: r.file,
-          filePath: `${batchFolder}\\${r.file}`,
+          filePath: joinPath(batchFolder, r.file),
           subject: r.subject || batchSubject || subject || 'Sujet',
           transcription: r.transcription || '',
           studentName: r.studentName,
@@ -534,7 +612,7 @@ export default function Home() {
         const files: string[] = listData.files || [];
         itemsToExpect = files.map(f => ({
           file: f,
-          filePath: `${batchFolder}\\${f}`,
+          filePath: joinPath(batchFolder, f),
           subject: batchSubject || subject || 'Sujet'
         }));
       }
@@ -544,7 +622,7 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           taskType,
-          exchangeFolder: outputFolder ? `${outputFolder}\\_ECHANGE_IA` : undefined,
+          exchangeFolder: outputFolder ? joinPath(outputFolder, '_ECHANGE_IA') : undefined,
           items: itemsToExpect,
           config: {
             level,
@@ -674,6 +752,36 @@ export default function Home() {
     }
   };
 
+  /**
+   * Paramètres propres au type d'épreuve (dictée, traduction, grammaire, composition…),
+   * communs à la correction unitaire et à la reprise d'une copie du lot.
+   * `delfSubject` : sujet utilisé pour le DELF (et la composition sans sujet propre).
+   */
+  const buildExamFields = (delfSubject: string) => {
+    const isCustom = examType !== 'delf_b1' && examType !== 'delf_b2';
+    return {
+      subject: examType === 'dictee' ? 'Dictée' :
+               examType === 'traduction' ? 'Traduction' :
+               examType === 'grammaire' ? grammarExerciseSubject :
+               examType === 'composition' ? (compositionSubject.trim() || delfSubject.trim()) : delfSubject,
+      examType: isCustom ? examType : 'delf',
+      maxScore: customMaxScore,
+      referenceText: dictationReferenceText,
+      penalties: dictationPenalties,
+      sourceText: translationSourceText,
+      modelTranslation: translationModel,
+      sourceLang: translationSourceLang,
+      targetLang: translationTargetLang,
+      exerciseSubject: grammarExerciseSubject,
+      answerKey: grammarAnswerKey,
+      compositionType,
+      corpusText: compositionCorpus,
+      compositionLanguage,
+      disableStandardGrid: compositionDisableGrid,
+      customInstructions,
+    };
+  };
+
   const handleEvaluate = async () => {
     if (examType === 'dictee') {
       if (!dictationReferenceText.trim()) return alert("Veuillez renseigner le texte officiel de la dictée.");
@@ -705,19 +813,12 @@ export default function Home() {
     abortControllerRef.current = controller;
 
     try {
-      const isCustom = examType !== 'delf_b1' && examType !== 'delf_b2';
-      const effectiveExamType = isCustom ? examType : 'delf';
-      const effectiveSubject = examType === 'dictee' ? 'Dictée' :
-                               examType === 'traduction' ? 'Traduction' :
-                               examType === 'grammaire' ? grammarExerciseSubject :
-                               examType === 'composition' ? (compositionSubject.trim() || subject.trim()) : subject;
-
       const res = await fetch("/api/evaluate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: controller.signal,
         body: JSON.stringify({ 
-          subject: effectiveSubject, 
+          ...buildExamFields(subject),
           text, 
           evalModel, 
           language, 
@@ -729,21 +830,6 @@ export default function Home() {
           apiKeys: Object.fromEntries(Object.entries(apiKeys).map(([k, v]) => [k, { ...v, keyMode }])),
           gradingMode,
           nativeLanguage,
-          examType: effectiveExamType,
-          maxScore: customMaxScore,
-          referenceText: dictationReferenceText,
-          penalties: dictationPenalties,
-          sourceText: translationSourceText,
-          modelTranslation: translationModel,
-          sourceLang: translationSourceLang,
-          targetLang: translationTargetLang,
-          exerciseSubject: grammarExerciseSubject,
-          answerKey: grammarAnswerKey,
-          compositionType,
-          corpusText: compositionCorpus,
-          compositionLanguage,
-          disableStandardGrid: compositionDisableGrid,
-          customInstructions,
         })
       });
 
@@ -758,7 +844,7 @@ export default function Home() {
         showToast(data.fallbackNotice, "Repli automatique de modèle");
       }
 
-      if (useDoubleEval && supervisionMode === 'external') {
+      if (doubleEvalActive && supervisionMode === 'external') {
         // Double évaluation externe : on affiche la 1re évaluation telle quelle
         // puis on ouvre la modale d'export/import (aucun appel API de supervision).
         abortControllerRef.current = null;
@@ -766,13 +852,18 @@ export default function Home() {
         const enriched = { ...data, id: savedId || data.id };
         setEvaluationResult(enriched);
         setIsLoading(false);
-        openExternalSupervision('single', [{
-          fileId: enriched.file || 'single',
-          subject: enriched.subject || subject || 'Sujet',
-          transcription: enriched.transcription || text,
-          result1: enriched,
-        }]);
-      } else if (useDoubleEval && supervisionProvider && supervisionModel) {
+        if (externalEvalSupported) {
+          openExternalSupervision('single', [{
+            fileId: enriched.file || 'single',
+            subject: enriched.subject || subject || 'Sujet',
+            transcription: enriched.transcription || text,
+            result1: enriched,
+          }]);
+        } else {
+          // Épreuve hors DELF : pas de double évaluation externe, la 1re évaluation est retenue.
+          showToast("Double évaluation externe indisponible pour cette épreuve (DELF uniquement) : la première évaluation est retenue.", "Double évaluation");
+        }
+      } else if (doubleEvalActive && supervisionProvider && supervisionModel) {
         abortControllerRef.current = null;
         await handleSuperviseResultWithState(data);
       } else {
@@ -825,6 +916,16 @@ export default function Home() {
       });
       setSubject(recoveredSubject);
       setText(detailedData.transcription || "");
+      // L'épreuve affichée suit celle du bilan rouvert : sans cela, un bilan DELF s'ouvrait sous
+      // « Dictée » (ou l'inverse) si cette épreuve était sélectionnée, avec le mauvais barème.
+      const typeBilan = detailedData.examType;
+      if (['dictee', 'traduction', 'grammaire', 'composition'].includes(typeBilan)) {
+        setExamType(typeBilan);
+      } else if (detailedData.level === 'B1' || detailedData.level === 'B2') {
+        handleLevelChange(detailedData.level);
+      } else if (!['delf_b1', 'delf_b2'].includes(examType)) {
+        setExamType(level === 'B1' ? 'delf_b1' : 'delf_b2');
+      }
       setMode("SINGLE");
       setMainView("CORRECTION");
       setEvalResultVersion(v => v + 1);
@@ -988,6 +1089,10 @@ export default function Home() {
       }
     }
 
+    // 3. Le nouveau lot remplace celui qui est affiché : confirmation s'il y a du travail non envoyé
+    if (!confirmerAbandonLot(ocrOnly ? "« OCR seul »" : "« Lancer le lot complet »")) return;
+    pdfNamesRef.current = {};
+
     setIsBatchLoading(true);
     setBatchProgress(null);
     setBatchKeyInfo(null);
@@ -999,7 +1104,7 @@ export default function Home() {
       if (autoEmail) qs.append("autoEmail", "true");
       // En mode externe, le lot ne fait que la 1re évaluation ; la double
       // évaluation est faite après coup via l'export/import Claude.
-      if (!ocrOnly && useDoubleEval && supervisionMode === 'internal') qs.append("useDoubleEval", "true");
+      if (!ocrOnly && doubleEvalActive && supervisionMode === 'internal') qs.append("useDoubleEval", "true");
 
       const res = await fetch(`/api/batch?${qs.toString()}`, {
         method: "POST",
@@ -1019,6 +1124,9 @@ export default function Home() {
           apiKeys: Object.fromEntries(Object.entries(apiKeys).map(([k, v]) => [k, { ...v, keyMode }])),
           ocrKeyMode,
           emailConfig,
+          emailSubject,
+          emailBody,
+          emailSignature: signature,
           gradingMode,
           nativeLanguage,
           examType,
@@ -1061,7 +1169,12 @@ export default function Home() {
             if (!dataStr) continue;
             try {
               const event = JSON.parse(dataStr);
-              if (event.type === 'progress') {
+              if (event.type === 'start') {
+                if (Array.isArray(event.ignoredFiles) && event.ignoredFiles.length > 0) {
+                  const liste = event.ignoredFiles.slice(0, 8).join(", ") + (event.ignoredFiles.length > 8 ? `… (+${event.ignoredFiles.length - 8})` : "");
+                  showToast(`${event.ignoredFiles.length} fichier(s) ignoré(s), car ce ne sont pas des copies (PDF, JPG, PNG, TXT) : ${liste}`, "Fichiers ignorés");
+                }
+              } else if (event.type === 'progress') {
                 setBatchProgress({ message: event.message, fileIndex: event.fileIndex, totalFiles: event.totalFiles, phase: event.phase });
               } else if (event.type === 'key_update') {
                 setBatchKeyInfo({ source: event.source, key: event.key });
@@ -1334,7 +1447,7 @@ export default function Home() {
           evalModel,
           text: itemToRetry.transcription,
           ocrOnly: isOcrOnlyRetry,
-          useDoubleEval: isJuryRetry,
+          useDoubleEval: isJuryRetry && doubleEvalSupported,
           supervisionProvider: isJuryRetry ? supervisionProvider : undefined,
           supervisionModel: isJuryRetry ? supervisionModel : undefined,
           apiKeys: Object.fromEntries(Object.entries(apiKeys).map(([k, v]) => [k, { ...v, keyMode }])),
@@ -1396,12 +1509,30 @@ export default function Home() {
 
   const handleSendBatchEmails = async () => {
     if (pendingReviews.length === 0) return;
+    const nomDe = (r: any) => r.studentName || r.file;
+    const restantes = pendingReviews.filter(r => r.status === 'success' && !r.isOcrOnly && !r.emailSent);
+    const aEnvoyer = restantes.filter(r => r.studentEmail);
+    const sansAdresse = restantes.filter(r => !r.studentEmail);
+    const nonEvaluees = pendingReviews.filter(r => r.status === 'success' && r.isOcrOnly);
+    if (aEnvoyer.length === 0) {
+      alert(sansAdresse.length > 0
+        ? `Aucun e-mail ne peut partir : ${sansAdresse.length} copie(s) sans adresse e-mail (${sansAdresse.map(nomDe).join(', ')}).\n\nSaisissez les adresses dans la liste, puis recommencez.`
+        : "Aucun e-mail à envoyer : toutes les copies évaluées ont déjà été envoyées.");
+      return;
+    }
+    let question = `Envoyer ${aEnvoyer.length} e-mail(s), chacun avec le bilan PDF de l'étudiant en pièce jointe ?`;
+    if (sansAdresse.length > 0) {
+      question += `\n\n${sansAdresse.length} copie(s) seront ignorées faute d'adresse e-mail : ${sansAdresse.map(nomDe).join(', ')}.`;
+    }
+    if (!window.confirm(question)) return;
+
     setIsSendingBatch(true);
     let sentCount = 0;
     const sentFiles: string[] = [];
+    const echecs: string[] = [];
     for (let i = 0; i < pendingReviews.length; i++) {
         const item = pendingReviews[i];
-        if (!item.studentEmail || item.status !== 'success' || item.emailSent) continue;
+        if (!item.studentEmail || item.status !== 'success' || item.isOcrOnly || item.emailSent) continue;
 
         try {
             setPendingReviews(prev => {
@@ -1409,13 +1540,13 @@ export default function Home() {
               nr[i] = { ...nr[i], isSendingEmail: true };
               return nr;
             });
-            // Génération à la demande juste avant l'envoi
+            // Génération à la demande juste avant l'envoi (le PDF précédent de cette copie est remplacé)
             const regRes = await fetch("/api/pdf", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ result: item, level, outputFolder })
+                body: JSON.stringify({ result: item, level, outputFolder, replaceFileName: replaceNameFor(item) })
             });
-            
+
             if (!regRes.ok) throw new Error("Échec de génération PDF");
 
             const cd = regRes.headers.get('Content-Disposition');
@@ -1424,17 +1555,18 @@ export default function Home() {
                 const encoded = cd.split('filename="')[1].split('"')[0];
                 currentPdfFileName = decodeURIComponent(encoded);
             }
+            rememberPdfName(item, currentPdfFileName);
             const currentPdfPath = `${outputFolder}/${currentPdfFileName}`;
 
             const emailRes = await fetch("/api/email", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ 
-                  to: item.studentEmail, 
+                body: JSON.stringify({
+                  to: item.studentEmail,
                   subject: emailSubject,
                   body: emailBody,
-                  attachmentName: currentPdfFileName, 
-                  attachmentPath: currentPdfPath, 
+                  attachmentName: currentPdfFileName,
+                  attachmentPath: currentPdfPath,
                   level,
                   emailConfig
                 })
@@ -1449,17 +1581,18 @@ export default function Home() {
             await fetch("/api/history", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ 
-                  ...item, 
+                body: JSON.stringify({
+                  ...item,
                   subject: item.subject || batchSubject || subject || (item as any)._comparison?.firstEval?.subject || (item as any)._comparison?.secondEval?.subject || '',
-                  level 
+                  level
                 })
             });
 
             sentCount++;
             sentFiles.push(item.file);
-        } catch (e) { 
-            console.error(e); 
+        } catch (e: any) {
+            console.error(e);
+            echecs.push(`${nomDe(item)} (${e?.message || 'erreur inconnue'})`);
         } finally {
             setPendingReviews(prev => {
               const nr = [...prev];
@@ -1469,23 +1602,28 @@ export default function Home() {
         }
     }
     setIsSendingBatch(false);
-    
-    // Marquer les items envoyés, garder les non-envoyés/erreurs
+
+    // Marquer les items envoyés, garder les non-envoyés/erreurs ; le lot n'est vidé que si tout est parti
+    const toutEstParti = !pendingReviews.some(r => r.status === 'error' || (r.status === 'success' && !r.emailSent && !sentFiles.includes(r.file)));
     setPendingReviews(prev => {
-      const updated = prev.map(r => 
+      const updated = prev.map(r =>
         sentFiles.includes(r.file) ? { ...r, emailSent: true } : r
       );
-      // Vérifier s'il reste des items non traités (erreurs ou sans email)
       const remaining = updated.filter(r => r.status === 'error' || (r.status === 'success' && !r.emailSent));
       if (remaining.length === 0) {
-        // Tout est envoyé, réinitialiser proprement
         setBatchResults(null);
         return [];
       }
       return updated;
     });
-    
-    alert(`${sentCount} e-mails expédiés et historique sauvegardé !`);
+
+    const lignes = [`${sentCount} e-mail(s) envoyé(s) sur ${aEnvoyer.length}.`];
+    if (echecs.length > 0) lignes.push(`${echecs.length} échec(s) : ${echecs.join(' ; ')}.`);
+    if (sansAdresse.length > 0) lignes.push(`${sansAdresse.length} copie(s) ignorée(s) faute d'adresse e-mail : ${sansAdresse.map(nomDe).join(', ')}.`);
+    if (nonEvaluees.length > 0) lignes.push(`${nonEvaluees.length} copie(s) pas encore évaluée(s) n'ont pas été envoyées.`);
+    if (sentCount > 0) lignes.push("Les bilans envoyés sont enregistrés dans l'historique.");
+    lignes.push(toutEstParti ? "Tous les bilans sont partis : le lot est terminé." : "Le lot reste affiché : corrigez les points ci-dessus puis relancez l'envoi (les bilans déjà envoyés ne seront pas renvoyés).");
+    alert(lignes.join('\n'));
   };
 
   const handleEvaluateAll = async () => {
@@ -1509,6 +1647,7 @@ export default function Home() {
     const rawGlobal = Object.values(item.criteriaScores).reduce((a: any, b: any) => a + (Number(b) || 0), 0) as number;
     item.globalScore = rawGlobal;
     item.isDirty = true;
+    item.scoreAdjusted = true;
     newReviews[idx] = item;
     setPendingReviews(newReviews);
   };
@@ -1518,7 +1657,7 @@ export default function Home() {
       const res = await fetch("/api/pdf", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ result: item, level, outputFolder })
+        body: JSON.stringify({ result: item, level, outputFolder, preview: true })
       });
       if (!res.ok) {
         const errData = await res.json().catch(() => ({ error: "Erreur serveur" }));
@@ -1560,7 +1699,8 @@ export default function Home() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
-          subject: batchSubject || "Lot", 
+          // Même type d'épreuve et mêmes réglages que le lot (dictée, traduction…), pas seulement le DELF.
+          ...buildExamFields(itemToTransfer?.subject || batchSubject || subject || "Sujet"),
           text: batchCorrectionText, 
           evalModel, 
           language, 
@@ -1608,12 +1748,23 @@ export default function Home() {
   const isSupervisingAll = superviseUiState !== 'idle';
 
   const handleSuperviseBatch = async () => {
-    const successItems = pendingReviews.filter(r => r.status === 'success');
-    if (successItems.length === 0) {
-      alert("Aucune copie éligible à la supervision. Les copies en erreur sont ignorées.");
+    if (!doubleEvalSupported) { alert(DOUBLE_EVAL_DELF_ONLY_MSG); return; }
+    const evaluated = pendingReviews.filter(r => r.status === 'success' && !r.isOcrOnly);
+    if (evaluated.length === 0) {
+      alert("Aucune copie éligible à la double évaluation. Les copies en erreur ou pas encore évaluées sont ignorées.");
       return;
     }
-    
+    // Les copies déjà double-évaluées ne sont pas repassées.
+    const successItems = evaluated.filter(r => !r._comparison);
+    if (successItems.length === 0) {
+      alert("Toutes les copies du lot ont déjà été double-évaluées.");
+      return;
+    }
+    const ajustees = successItems.filter(r => r.scoreAdjusted).length;
+    if (ajustees > 0 && !window.confirm(`${ajustees} copie(s) ont des notes ajustées à la main : la double évaluation va les remplacer par ses propres notes.\n\nLancer la double évaluation sur ${successItems.length} copie(s) ?`)) {
+      return;
+    }
+
     superviseControlRef.current = 'running';
     setSuperviseUiState('running');
     let count = 0;
@@ -1695,6 +1846,11 @@ export default function Home() {
   const handleSuperviseSingle = async (idx: number) => {
     const item = pendingReviews[idx];
     if (!item || item.status !== 'success') return;
+    if (!doubleEvalSupported) { alert(DOUBLE_EVAL_DELF_ONLY_MSG); return; }
+    if (item._comparison || item.scoreAdjusted) {
+      const raison = item._comparison ? "a déjà été double-évaluée" : "a des notes ajustées à la main";
+      if (!window.confirm(`Cette copie ${raison}. Relancer la double évaluation remplacera son résultat actuel.\n\nContinuer ?`)) return;
+    }
 
     setPendingReviews(prev => {
       const nr = [...prev];
@@ -1755,22 +1911,40 @@ export default function Home() {
     }
   };
 
+  // Double évaluation externe du lot : seules les copies évaluées et pas encore double-évaluées sont exportées.
+  const handleDoubleEvalExterneLot = () => {
+    const eligibles = pendingReviews.filter(r => r.status === 'success' && !r.isOcrOnly && !r._comparison);
+    const ajustees = eligibles.filter(r => r.scoreAdjusted).length;
+    if (ajustees > 0 && !window.confirm(`${ajustees} copie(s) ont des notes ajustées à la main : le résultat importé de l'IA externe les remplacera (la note du second évaluateur fait autorité).\n\nExporter ${eligibles.length} copie(s) pour la double évaluation externe ?`)) {
+      return;
+    }
+    openExternalSupervision('batch', eligibles.map(r => ({ fileId: r.file, subject: r.subject || batchSubject || 'Sujet', transcription: r.transcription || '', result1: r })));
+  };
+
   const [isGeneratingAll, setIsGeneratingAll] = useState(false);
   const handleGenerateAllPdfs = async () => {
     if (pendingReviews.length === 0) return;
     setIsGeneratingAll(true);
     let count = 0;
+    const echecs: string[] = [];
     try {
       for (const item of pendingReviews) {
-        if (item.status !== 'success') continue;
-        await fetch("/api/pdf", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ result: item, level, outputFolder })
-        });
-        count++;
+        if (item.status !== 'success' || item.isOcrOnly) continue;
+        try {
+          // Le PDF précédent de cette copie est remplacé (pas de doublon dans le dossier de sortie)
+          const res = await fetch("/api/pdf", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ result: item, level, outputFolder, replaceFileName: replaceNameFor(item) })
+          });
+          if (!res.ok) throw new Error("Échec de génération");
+          rememberPdfName(item, readPdfFileName(res));
+          count++;
+        } catch {
+          echecs.push(item.studentName || item.file);
+        }
       }
-      alert(`${count} PDF(s) générés dans le dossier de sortie.`);
+      alert(`${count} PDF(s) généré(s) dans le dossier de sortie.` + (echecs.length > 0 ? `\n${echecs.length} échec(s) : ${echecs.join(', ')}.` : ''));
     } catch (e) {
       alert("Erreur lors de la génération groupée.");
     } finally {
@@ -2021,7 +2195,7 @@ export default function Home() {
       const regRes = await fetch("/api/pdf", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ result: item, level, outputFolder })
+          body: JSON.stringify({ result: item, level, outputFolder, replaceFileName: replaceNameFor(item) })
       });
       if (!regRes.ok) throw new Error("Échec de génération PDF");
       const cd = regRes.headers.get('Content-Disposition');
@@ -2030,6 +2204,7 @@ export default function Home() {
           const encoded = cd.split('filename="')[1].split('"')[0];
           currentPdfFileName = decodeURIComponent(encoded);
       }
+      rememberPdfName(item, currentPdfFileName);
       const currentPdfPath = `${outputFolder}/${currentPdfFileName}`;
 
       const emailRes = await fetch("/api/email", {
@@ -2146,25 +2321,25 @@ export default function Home() {
 
         <div className="flex flex-col gap-1 mb-8">
            <button onClick={() => setMainView("CORRECTION")} className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${mainView === "CORRECTION" ? "bg-blue-50 text-blue-700 shadow-sm border border-blue-100" : "text-slate-500 hover:bg-slate-100"}`}><LayoutDashboard className="w-4 h-4"/> Correction</button>
-           <button onClick={() => setMainView("GENERATOR")} className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${mainView === "GENERATOR" ? "bg-indigo-50 text-indigo-700 shadow-sm border border-indigo-100" : "text-slate-500 hover:bg-slate-100"}`}><Sparkles className="w-4 h-4 text-indigo-600"/> Générateur CE/PE</button>
+           <div className="flex items-center gap-1"><button onClick={() => setMainView("GENERATOR")} className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${mainView === "GENERATOR" ? "bg-indigo-50 text-indigo-700 shadow-sm border border-indigo-100" : "text-slate-500 hover:bg-slate-100"}`}><Sparkles className="w-4 h-4 text-indigo-600"/> Générateur CE/PE</button><Aide cle="partage_generateur" taille={14} /></div>
            <button onClick={() => setMainView("CLASSES")} className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${mainView === "CLASSES" ? "bg-blue-50 text-blue-700 shadow-sm border border-blue-100" : "text-slate-500 hover:bg-slate-100"}`}><Users className="w-4 h-4"/> Classes</button>
            <button onClick={() => setMainView("HISTORY")} className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${mainView === "HISTORY" ? "bg-blue-50 text-blue-700 shadow-sm border border-blue-100" : "text-slate-500 hover:bg-slate-100"}`}><Clock className="w-4 h-4"/> Historique</button>
-           <button onClick={() => setMainView("MAINTENANCE")} className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${mainView === "MAINTENANCE" ? "bg-rose-50 text-rose-700 shadow-sm border border-rose-100" : "text-slate-500 hover:bg-slate-100"}`}><Database className="w-4 h-4"/> Maintenance</button>
+           <div className="flex items-center gap-1"><button onClick={() => setMainView("MAINTENANCE")} className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${mainView === "MAINTENANCE" ? "bg-rose-50 text-rose-700 shadow-sm border border-rose-100" : "text-slate-500 hover:bg-slate-100"}`}><Database className="w-4 h-4"/> Maintenance</button><Aide cle="partage_maintenance" taille={14} /></div>
         </div>
 
         {mainView === "CORRECTION" && (
             <>
-                <div className="flex p-1 bg-slate-100/80 rounded-2xl mb-6">
+                <div className="flex items-center gap-2 mb-6"><div className="flex flex-1 p-1 bg-slate-100/80 rounded-2xl">
                   <button onClick={() => { setMode("SINGLE"); setEvaluationResult(null); setSingleOcrAlerts([]); }} className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all ${mode === "SINGLE" ? "bg-white shadow-sm text-blue-700" : "text-slate-600 hover:text-slate-900"}`}>Unique</button>
                   <button onClick={() => { setMode("BATCH"); setEvaluationResult(null); setSingleOcrAlerts([]); }} className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all ${mode === "BATCH" ? "bg-white shadow-sm text-blue-700" : "text-slate-600 hover:text-slate-900"}`}>Lot</button>
-                </div>
+                </div><Aide cle="pe_modeUniqueLot" taille={14} /></div>
 
                 <div className="flex-1 overflow-y-auto pr-2">
                   <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 shadow-inner space-y-4 mb-4">
                     {/* OCR selector */}
                     <div>
                       <div className="flex items-center justify-between px-1 mb-2 gap-2">
-                        <label className="text-[10px] font-bold text-slate-400 uppercase block">📷 OCR (Lecture)</label>
+                        <span className="flex items-center gap-1"><label className="text-[10px] font-bold text-slate-400 uppercase block">📷 OCR (Lecture)</label><Aide cle="partage_cleLecture" taille={13} /></span>
                         <select 
                           value={ocrKeyMode}
                           onChange={e => setOcrKeyMode(e.target.value as 'free_only' | 'paid_only' | 'both')}
@@ -2175,17 +2350,17 @@ export default function Home() {
                           <option value="paid_only">Payant uniquement</option>
                         </select>
                       </div>
-                      <div className="grid grid-cols-2 gap-1 bg-white p-1 rounded-xl border border-slate-200">
+                      <div className="flex items-center gap-1"><div className="grid flex-1 grid-cols-2 gap-1 bg-white p-1 rounded-xl border border-slate-200">
                         <button onClick={() => setOcrModel('gemini-3.8-flash')} className={`py-1.5 rounded-lg text-[10px] font-bold transition-all ${ocrModel === 'gemini-3.8-flash' || ocrModel === 'gemini-flash' || ocrModel === 'gemini-3.7-flash' || ocrModel === 'gemini-3.5-flash' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:text-blue-600'}`}>3.8 Flash</button>
                         <button onClick={() => setOcrModel('gemini-3.6-flash')} className={`py-1.5 rounded-lg text-[10px] font-bold transition-all ${ocrModel === 'gemini-3.6-flash' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:text-blue-600'}`}>3.6 Flash</button>
-                      </div>
+                      </div><Aide cle="partage_modeleLecture" taille={13} /></div>
                     </div>
 
                     {/* Model Selection Grid */}
                     <div className="pt-3 border-t border-slate-200">
                       <div className="flex items-center justify-between px-1 mb-2 gap-2">
-                        <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2"><Brain className="w-3 h-3"/>Modèle d'évaluation</h2>
-                        <select 
+                        <span className="flex items-center gap-1"><h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2"><Brain className="w-3 h-3"/>Modèle d'évaluation</h2><Aide cle="partage_modeleEvaluation" taille={13} /></span>
+                        <span className="flex items-center gap-1"><select 
                           value={keyMode}
                           onChange={e => setKeyMode(e.target.value as 'free_only' | 'paid_only' | 'both')}
                           className="bg-white border border-slate-200 rounded-xl px-1.5 py-0.5 text-[10px] font-bold text-slate-600 focus:ring-1 focus:ring-blue-500/20 outline-none cursor-pointer"
@@ -2193,7 +2368,7 @@ export default function Home() {
                           <option value="both">Gratuit + Payant</option>
                           <option value="free_only">Gratuit uniquement</option>
                           <option value="paid_only">Payant uniquement</option>
-                        </select>
+                        </select><Aide cle="partage_cleEvaluation" taille={13} /></span>
                       </div>
                       <div className="grid grid-cols-[auto_1fr_1fr] gap-1 items-center text-[10px]">
                         <div className="px-2 py-1"></div>
@@ -2209,14 +2384,16 @@ export default function Home() {
                     {/* Double évaluation */}
                     <div className="pt-3 border-t border-slate-200 flex flex-col gap-3">
                       <div className="flex items-center gap-3">
-                        <input type="checkbox" id="useDoubleEval" checked={useDoubleEval} onChange={e => setUseDoubleEval(e.target.checked)} className="w-5 h-5 rounded cursor-pointer accent-blue-600" />
-                        <label htmlFor="useDoubleEval" className="text-sm font-bold text-slate-600 cursor-pointer flex flex-col">
-                          <span className="flex items-center gap-2"><Brain className="w-4 h-4 text-purple-600" /> Double évaluation {useDoubleEval && <span className="bg-purple-100 text-purple-700 text-[10px] px-2 py-0.5 rounded-full">Actif</span>}</span>
-                          <span className="text-[10px] text-slate-400 font-normal">Supervision double évaluation (temps x2)</span>
+                        <input type="checkbox" id="useDoubleEval" checked={doubleEvalActive} disabled={!doubleEvalSupported} onChange={e => setUseDoubleEval(e.target.checked)} className="w-5 h-5 rounded cursor-pointer accent-blue-600 disabled:cursor-not-allowed disabled:opacity-50" />
+                        <label htmlFor="useDoubleEval" className={`text-sm font-bold text-slate-600 flex flex-col ${doubleEvalSupported ? "cursor-pointer" : "cursor-not-allowed opacity-60"}`}>
+                          <span className="flex items-center gap-2"><Brain className="w-4 h-4 text-purple-600" /> Double évaluation {doubleEvalActive && <span className="bg-purple-100 text-purple-700 text-[10px] px-2 py-0.5 rounded-full">Actif</span>}</span>
+                          <span className="text-[10px] text-slate-400 font-normal">{doubleEvalSupported ? "Supervision double évaluation (temps x2)" : "Double évaluation disponible pour le DELF uniquement"}</span>
                         </label>
+                        <Aide cle="doubleEvaluation" />
                       </div>
-                      {(useDoubleEval || (evaluationResult && !evaluationResult._comparison)) && (
+                      {doubleEvalSupported && (useDoubleEval || (evaluationResult && !evaluationResult._comparison)) && (
                         <div className="space-y-3 pt-2 border-t border-slate-200">
+                          <p className="text-[10px] font-bold text-slate-400 uppercase px-1 flex items-center gap-1">Second évaluateur <Aide cle="modeSupervision" taille={13} /></p>
                           <div className="grid grid-cols-2 gap-1 bg-white p-1 rounded-xl border border-slate-200">
                             <button type="button" onClick={() => setSupervisionMode('internal')} className={`py-1.5 rounded-lg text-[10px] font-bold transition-all ${supervisionMode === 'internal' ? 'bg-purple-600 text-white shadow-sm' : 'text-slate-500 hover:text-purple-600'}`}>Dans l'appli</button>
                             <button type="button" onClick={() => setSupervisionMode('external')} className={`py-1.5 rounded-lg text-[10px] font-bold transition-all ${supervisionMode === 'external' ? 'bg-violet-600 text-white shadow-sm' : 'text-slate-500 hover:text-violet-600'}`}>IA externe (sans clé)</button>
@@ -2226,7 +2403,7 @@ export default function Home() {
                           )}
                           {supervisionMode === 'internal' && (
                           <div>
-                            <label className="text-[10px] font-bold text-slate-400 uppercase px-1 mb-1 block">Modèle de double évaluation</label>
+                            <div className="flex items-center gap-1 mb-1"><label className="text-[10px] font-bold text-slate-400 uppercase px-1 block">Modèle de double évaluation</label><Aide cle="partage_modeleDoubleEval" taille={13} /></div>
                             <div className="grid grid-cols-[auto_1fr_1fr] gap-1 items-center text-[10px]">
                               <div className="px-1 py-1"></div>
                               <div className="text-center font-bold text-slate-400 uppercase py-0.5">Léger</div>
@@ -2243,7 +2420,7 @@ export default function Home() {
 
                     {/* Modèle d'E-mail */}
                     <div className="pt-3 border-t border-slate-200">
-                      <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 px-1 flex items-center gap-2"><Mail className="w-3.5 h-3.5"/> Modèle d'E-mail</h2>
+                      <div className="flex items-center gap-1 mb-3"><h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider px-1 flex items-center gap-2"><Mail className="w-3.5 h-3.5"/> Modèle d'E-mail</h2><Aide cle="partage_modeleEmail" taille={13} /></div>
                       <div className="space-y-4">
                         <div className="space-y-1">
                           <label className="text-[10px] font-bold text-slate-400 uppercase px-1">Objet</label>
@@ -2263,14 +2440,14 @@ export default function Home() {
                 </div>
             </>
         )}
-        <div className="pt-4 border-t border-slate-200 mt-auto flex-shrink-0">
+        <div className="pt-4 border-t border-slate-200 mt-auto flex-shrink-0 flex items-center gap-2">
           <button 
             onClick={handleShutdown} 
             className="w-full py-3 px-4 bg-slate-100 hover:bg-rose-50 hover:text-rose-600 border border-slate-200 hover:border-rose-100 rounded-2xl flex items-center justify-center gap-2 font-bold text-slate-600 transition-all cursor-pointer"
           >
             <Power className="w-4 h-4" />
             Quitter l'application
-          </button>
+          </button><Aide cle="partage_quitter" taille={16} />
         </div>
       </motion.aside>
 
@@ -2284,7 +2461,7 @@ export default function Home() {
                 <div className="flex items-center gap-6 w-full justify-start">
                   {/* Type d'épreuve */}
                   <div className="flex items-center gap-2">
-                    <span className="text-xs text-slate-900 font-bold">Épreuve :</span>
+                    <span className="text-xs text-slate-900 font-bold">Épreuve :</span><Aide cle="pe_epreuve" taille={14} />
                     <div className="flex p-0.5 bg-white rounded-lg border border-slate-200">
                       <button 
                         onClick={() => handleExamTypeChange("delf_b1")} 
@@ -2327,7 +2504,7 @@ export default function Home() {
 
                   {/* Type de notation */}
                   <div className="flex items-center gap-2">
-                    <span className="text-xs text-slate-900 font-bold">Barème :</span>
+                    <span className="text-xs text-slate-900 font-bold">Barème :</span><Aide cle="partage_bareme" taille={14} />
                     {(examType === 'delf_b1' || examType === 'delf_b2') ? (
                       <div className="flex p-0.5 bg-white rounded-lg border border-slate-200">
                         <button 
@@ -2353,7 +2530,7 @@ export default function Home() {
 
                 {/* Deuxième ligne : Autres options sans abréviations */}
                 <div className="flex items-center gap-4 text-xs pt-2 border-t border-slate-200/60 w-full justify-start">
-                  <span>Langue du feedback :</span>
+                  <span>Langue du feedback :</span><Aide cle="partage_langueFeedback" taille={14} />
                   <select value={language} onChange={e => setLanguage(e.target.value as "FR"|"VN"|"CZ"|"TW"|"EN")} className="bg-transparent font-bold text-blue-600 outline-none cursor-pointer">
                     <option value="VN">VN</option>
                     <option value="FR">FR</option>
@@ -2372,8 +2549,8 @@ export default function Home() {
                   <label className="ml-2 flex items-center gap-1.5 cursor-pointer select-none text-slate-500">
                     <input type="checkbox" checked={plusEnglish} onChange={e => setPlusEnglish(e.target.checked)} className="rounded text-blue-600 border-slate-300 focus:ring-blue-500/20" />
                     <span>+ anglais</span>
-                  </label>
-                  <button onClick={() => { setEvaluationResult(null); setBatchResults(null); setSingleOcrAlerts([]); setOcrModelInfo(null); }} className="ml-4 p-2 text-slate-400 hover:text-blue-600 cursor-pointer"><RefreshCcw className="w-4 h-4"/></button>
+                  </label><Aide cle="partage_langueMaternelle" taille={14} />
+                  <button onClick={() => { setEvaluationResult(null); setBatchResults(null); setSingleOcrAlerts([]); setOcrModelInfo(null); }} className="ml-4 p-2 text-slate-400 hover:text-blue-600 cursor-pointer"><RefreshCcw className="w-4 h-4"/></button><Aide cle="partage_remiseAZero" taille={14} />
                 </div>
               </div>
             </header>
@@ -2422,7 +2599,7 @@ export default function Home() {
                 {/* Sujet DELF pour B1/B2 */}
                 {(examType === 'delf_b1' || examType === 'delf_b2') && (
                   <div className="space-y-2">
-                    <div className="flex justify-between items-center bg-slate-100/50 p-2 rounded-xl"><label className="text-sm font-bold text-slate-700 ml-2">Sujet de l'épreuve DELF {level}</label><button onClick={() => setSubject("")} className="text-[10px] text-slate-400 hover:text-red-500 font-bold uppercase tracking-widest flex items-center gap-1 mr-2"><RotateCcw className="w-3 h-3"/> Reset</button></div>
+                    <div className="flex justify-between items-center bg-slate-100/50 p-2 rounded-xl"><div className="flex items-center gap-1 ml-2"><label className="text-sm font-bold text-slate-700">Sujet de l'épreuve DELF {level}</label><Aide cle="partage_sujet" taille={14} /></div><button onClick={() => setSubject("")} className="text-[10px] text-slate-400 hover:text-red-500 font-bold uppercase tracking-widest flex items-center gap-1 mr-2"><RotateCcw className="w-3 h-3"/> Reset</button></div>
                     <textarea value={subject} onChange={e => setSubject(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-sm h-24 focus:ring-2 focus:ring-blue-500/20 outline-none resize-none" placeholder="Décrivez le sujet de production écrite..."/>
                   </div>
                 )}
@@ -2437,6 +2614,7 @@ export default function Home() {
                          examType === 'composition' ? "Copie rédigée de l'élève (Composition)" :
                          "Copie Étudiante"}
                       </label>
+                      <Aide cle="pe_zoneCopie" taille={14} />
                       {text && renderOcrBadge(ocrModelInfo)}
                     </div>
                     <div className="flex items-center gap-2">
@@ -2453,7 +2631,8 @@ export default function Home() {
                         <FileText className="w-3.5 h-3.5" />
                         <span>Copier prompt OCR {examType === 'dictee' ? '(Dictée)' : ''}</span>
                       </button>
-                      <label className="cursor-pointer px-4 py-2 rounded-xl text-xs font-bold bg-blue-600 text-white hover:bg-blue-700">📂 Importer OCR API<input type="file" className="hidden" onChange={handleFileUpload} multiple/></label>
+                      <Aide cle="pe_copierPromptOcr" taille={14} />
+                      <label className="cursor-pointer px-4 py-2 rounded-xl text-xs font-bold bg-blue-600 text-white hover:bg-blue-700">📂 Importer OCR API<input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" onChange={handleFileUpload} multiple/></label><Aide cle="pe_importerOcr" taille={14} />
                       <button onClick={() => { setText(""); setOcrModelInfo(null); }} className="text-[10px] text-slate-400 hover:text-red-500 font-bold uppercase tracking-widest flex items-center gap-1"><RotateCcw className="w-3 h-3"/> Reset</button>
                     </div>
                   </div>
@@ -2466,7 +2645,7 @@ export default function Home() {
                     >
                       <div className="flex items-center gap-2 text-amber-800 font-bold text-sm">
                         <Info className="w-5 h-5 text-amber-600" />
-                        <span>Attention : Doutes de lecture OCR détectés par l'IA</span>
+                        <span>Attention : Doutes de lecture OCR détectés par l'IA</span><Aide cle="pe_alertesOcr" taille={14} />
                       </div>
                       <ul className="list-disc pl-5 text-xs text-amber-700 space-y-1">
                         {singleOcrAlerts.map((alert, idx) => (
@@ -2578,19 +2757,53 @@ export default function Home() {
                             const first = validEvaluations[0];
                             
                             // Sauvegarder toutes les évaluations dans l'historique
-                            const itemsToSave = validEvaluations.map(ev => ({
-                              ...ev,
-                              subject: ev.subject || subject || 'Sujet',
-                              level: ev.level || level || 'B2'
-                            }));
+                            // Retrouver les bilans déjà présents dans l'historique : recharger le même fichier
+                            // met à jour l'enregistrement existant au lieu d'en créer un second.
+                            let historiqueExistant: any[] = [];
+                            try {
+                              const hr = await fetch("/api/history?type=pe");
+                              if (hr.ok) {
+                                const h = await hr.json();
+                                if (Array.isArray(h)) historiqueExistant = h;
+                              }
+                            } catch { /* historique illisible : les bilans seront enregistrés comme nouveaux */ }
+                            const nomNorm = (v: any) => String(v || 'Inconnu').trim().toLowerCase();
+                            const signature = (o: any) => JSON.stringify(Object.keys(o || {}).sort().map(k => [k, o[k]]));
+                            const scoreDe = (e: any) => typeof e.globalScore === 'number' ? e.globalScore : (e.totalScore !== undefined ? e.totalScore : 0);
+                            const idsPris = new Set<string>();
+                            const itemsToSave = validEvaluations.map(ev => {
+                              let id = ev.id;
+                              if (!id) {
+                                const identique = historiqueExistant.find(h => !idsPris.has(h.id)
+                                  && nomNorm(h.studentName) === nomNorm(ev.studentName)
+                                  && h.globalScore === scoreDe(ev)
+                                  && signature(h.criteriaScores) === signature(ev.criteriaScores));
+                                if (identique) id = identique.id;
+                              }
+                              if (id) idsPris.add(id);
+                              return {
+                                ...ev,
+                                id,
+                                subject: ev.subject || subject || 'Sujet',
+                                level: ev.level || level || 'B2'
+                              };
+                            });
 
-                            await fetch("/api/history", {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ records: itemsToSave })
-                            }).catch(err => console.error("Erreur sauvegarde import:", err));
+                            let savedRecords: any[] = [];
+                            try {
+                              const sr = await fetch("/api/history", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ records: itemsToSave })
+                              });
+                              if (sr.ok) {
+                                const sd = await sr.json();
+                                savedRecords = sd.records || (sd.record ? [sd.record] : []);
+                              }
+                            } catch (err) { console.error("Erreur sauvegarde import:", err); }
 
-                            setEvaluationResult(first);
+                            // L'identifiant d'historique est rattaché au bilan affiché (sans lui, une correction ultérieure créerait un doublon).
+                            setEvaluationResult({ ...first, id: savedRecords[0]?.id || itemsToSave[0]?.id || first.id });
                             if (first.subject) setSubject(first.subject);
                             if (first.transcription) setText(first.transcription);
                             setEvalResultVersion(v => v + 1);
@@ -2611,8 +2824,10 @@ export default function Home() {
                       }}
                     />
                   </label>
+                  <Aide cle="partage_chargerBilan" taille={18} className="self-center" />
                   <button
                     onClick={() => {
+                      if (!externalEvalSupported) return alert(EXTERNAL_UNSUPPORTED_MSG);
                       if (!subject || !text) return alert("Veuillez remplir le sujet et le texte.");
                       openExternalInitial('single', [{
                         fileId: 'single',
@@ -2626,7 +2841,8 @@ export default function Home() {
                   >
                     <Brain className="w-5 h-5 text-amber-600" /> Éval. externe
                   </button>
-                  <button onClick={handleEvaluate} className="px-10 py-4 bg-slate-900 text-white rounded-2xl font-bold flex items-center gap-2 hover:bg-black">Analyser <Send className="w-4 h-4"/></button>
+                  <Aide cle="evalExterneUnique" taille={18} className="self-center" />
+                  <button onClick={handleEvaluate} className="px-10 py-4 bg-slate-900 text-white rounded-2xl font-bold flex items-center gap-2 hover:bg-black">Analyser <Send className="w-4 h-4"/></button><Aide cle="partage_analyser" taille={18} className="self-center" />
                 </div>
               </motion.div>
             )}
@@ -2666,6 +2882,7 @@ export default function Home() {
                 >
                   Interrompre l'évaluation
                 </button>
+                <Aide cle="partage_interrompre" taille={16} className="mt-2" />
               </motion.div>
             )}
 
@@ -2751,6 +2968,7 @@ export default function Home() {
                       <button onClick={handleBatchCorrectionEval} disabled={isBatchCorrectingEval} className="px-8 py-3 font-bold text-white bg-blue-600 disabled:opacity-50 hover:bg-blue-700 rounded-xl shadow-lg shadow-blue-500/20 flex items-center gap-2 transition-transform active:scale-95">
                          <Send className="w-5 h-5" /> Relancer l'Analyse
                       </button>
+                      <Aide cle="partage_relancerAnalyse" taille={18} className="self-center" />
                     </div>
                   </motion.div>
                 </motion.div>
@@ -2803,7 +3021,7 @@ export default function Home() {
                       <div key={i} className={`text-sm flex justify-between items-center py-1 ${r.status === 'error' ? 'text-red-500' : 'text-slate-600'}`}>
                         <div className="flex items-center gap-2">
                            <span>{r.status === 'error' ? '❌' : '✅'} {r.file}</span>                        </div>
-                        {r.globalScore != null && <span className="font-bold">{formatScore(r.globalScore)}/25</span>}
+                        {r.globalScore != null && <span className="font-bold">{formatScore(r.globalScore)}/{formatScore(getMaxScoreOf(r))}</span>}
                       </div>
                     ))}
                   </div>
@@ -2840,8 +3058,8 @@ export default function Home() {
                        </div>
                        <div className="flex items-center gap-1 border-l border-slate-300 pl-3">
                          <span className="text-slate-500 uppercase">Double éval.</span>
-                         <span className={`px-2 py-0.5 rounded-md text-white ${useDoubleEval && supervisionModel ? 'bg-blue-600' : 'bg-slate-300 text-slate-500'}`}>
-                           {useDoubleEval && supervisionModel ? getFriendlyModelName(supervisionModel, supervisionProvider) : '-'}
+                         <span className={`px-2 py-0.5 rounded-md text-white ${doubleEvalActive && supervisionModel ? 'bg-blue-600' : 'bg-slate-300 text-slate-500'}`}>
+                           {doubleEvalActive && supervisionModel ? getFriendlyModelName(supervisionModel, supervisionProvider) : '-'}
                          </span>
                        </div>
                      </div>
@@ -2865,10 +3083,12 @@ export default function Home() {
                             >
                               <Brain className="w-4 h-4 text-amber-600"/> Éval. externe en lot
                             </button>
+                            <Aide cle="evalExterneLot" taille={18} className="self-center" />
                             <button onClick={handleEvaluateAll} disabled={isEvaluatingAll} className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-sm transition-all shadow-sm hover:bg-blue-700 hover:shadow-md active:scale-95 disabled:opacity-50">
                               {isEvaluatingAll ? <Loader2 className="w-4 h-4 animate-spin"/> : <Send className="w-4 h-4"/>}
                               Lancer l'Évaluation
                             </button>
+                            <Aide cle="partage_lancerEvaluation" taille={18} className="self-center" />
                           </>
                        )}
                        {superviseUiState !== 'idle' ? (
@@ -2892,11 +3112,17 @@ export default function Home() {
                            }} className="flex items-center gap-2 px-4 py-2 bg-rose-100 text-rose-700 rounded-xl font-bold text-xs hover:bg-rose-200 transition-all border border-rose-200 shadow-sm">
                              <Square className="w-3.5 h-3.5"/> Stopper
                            </button>
+                           <Aide cle="partage_pauseStop" taille={14} />
                          </div>
-                       ) : (
+                       ) : doubleEvalSupported ? (
+                         <>
                          <button onClick={handleSuperviseBatch} disabled={!pendingReviews.some(r => r.status === 'success')} className="flex items-center gap-2 px-4 py-2.5 bg-purple-100 text-purple-700 rounded-xl font-bold text-sm transition-all shadow-sm border border-purple-200 hover:bg-purple-200 hover:shadow-md active:scale-95 disabled:opacity-50">
                            <Brain className="w-4 h-4"/> Lancer la double évaluation
                          </button>
+                         <Aide cle="partage_doubleEvalLot" taille={18} className="self-center" />
+                         </>
+                       ) : (
+                         <span className="self-center text-[10px] text-slate-400 italic max-w-[180px] leading-tight">Double évaluation disponible pour le DELF uniquement</span>
                        )}                     
                      <button 
                        onClick={() => addFilesInputRef.current?.click()}
@@ -2906,6 +3132,7 @@ export default function Home() {
                        {isAddingToBatch ? <Loader2 className="w-4 h-4 animate-spin" /> : <FilePlus2 className="w-4 h-4" />}
                        {isAddingToBatch ? "Traitement..." : "Ajouter des copies"}
                        </button>
+                     <Aide cle="partage_ajouterCopies" taille={16} className="self-center" />
                      </div>
                      {superviseUiState !== 'idle' && activeSuperviseFile && (
                        <div className="text-xs text-purple-700 font-bold flex items-center gap-1.5 bg-purple-50 px-3 py-1.5 rounded-full border border-purple-200 shadow-sm mr-1">
@@ -2937,7 +3164,7 @@ export default function Home() {
                 <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
                   <div className="flex justify-between items-center">
                     <label className="text-sm font-bold text-slate-700 flex items-center gap-2">
-                      <FileText className="w-4 h-4 text-blue-500"/> Sujet (Consigne) pour ce lot
+                      <FileText className="w-4 h-4 text-blue-500"/> Sujet (Consigne) pour ce lot <Aide cle="partage_sujetLotRevision" taille={14} />
                     </label>
                     <button onClick={() => setBatchSubject("")} className="text-[10px] text-slate-400 hover:text-red-500 font-bold uppercase tracking-widest flex items-center gap-1">
                       <RotateCcw className="w-3 h-3"/> Reset
@@ -2975,7 +3202,7 @@ export default function Home() {
                        <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-xl text-sm">
                          <p className="font-bold flex items-center gap-2 mb-2">
                            <Zap className="w-5 h-5 text-amber-600"/>
-                           Attention : {unrecognized.length} étudiant(s) non reconnu(s)
+                           Attention : {unrecognized.length} étudiant(s) non reconnu(s) <Aide cle="partage_etudiantsNonReconnus" taille={14} />
                          </p>
                          <p className="text-xs mb-2">Veuillez sélectionner manuellement l'étudiant pour les fichiers suivants :</p>
                          <ul className="list-disc pl-5 text-[11px] space-y-1">
@@ -2991,6 +3218,9 @@ export default function Home() {
                  <div className="space-y-4">
                    {pendingReviews.map((item, i) => {
                      if (item.status !== 'success') return null;
+                     const estPremiere = i === pendingReviews.findIndex(r => r.status === 'success');
+                     const estPremiereOcr = i === pendingReviews.findIndex(r => r.status === 'success' && r.isOcrOnly);
+                     const maxCopie = getMaxScoreOf(item);
                      return (
                        <div key={i} className="border border-slate-200 rounded-2xl p-5 bg-white shadow-sm space-y-3">
                          {/* Ligne d'en-tête */}
@@ -3002,9 +3232,10 @@ export default function Home() {
                              <div className="px-4 py-1.5 rounded-xl bg-slate-100 text-slate-500 font-bold text-xs flex items-center gap-2">
                                <RotateCcw className="w-3.5 h-3.5 animate-pulse" />
                                En attente d'évaluation
+                               {estPremiereOcr && <Aide cle="partage_enAttenteEvaluation" taille={14} />}
                              </div>                           ) : (
-                              <div className={`px-4 py-1.5 rounded-xl font-black text-lg ${item.globalScore >= 12.5 ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
-                                {formatScore(item.globalScore)}/25
+                              <div className={`px-4 py-1.5 rounded-xl font-black text-lg ${item.globalScore >= maxCopie / 2 ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                                {formatScore(item.globalScore)}/{formatScore(maxCopie)}
                               </div>
                             )}
                          </div>
@@ -3058,6 +3289,7 @@ export default function Home() {
                                  );
                                });
                              })()}
+                             {estPremiere && <Aide cle="partage_notesLot" taille={14} className="self-end" />}
                              {item.isDirty && (
                                <div className="ml-auto self-end flex items-center gap-1.5 px-2.5 py-1 bg-indigo-50 text-indigo-600 rounded-lg border border-indigo-100 animate-pulse">
                                  <Zap className="w-3 h-3 fill-current" />
@@ -3085,19 +3317,21 @@ export default function Home() {
                                     onClick={() => handleSendIndividualEmail(i)}
                                     disabled={item.isSendingEmail || isSendingBatch || !item.studentEmail}
                                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-colors font-bold ${item.emailSent ? 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'} disabled:opacity-50`}
-                                    title={item.emailSent ? "Renvoyer l'e-mail avec le PDF" : "Envoyer l'e-mail avec le PDF"}
+                                    title={!item.studentEmail ? "Bouton grisé : cette copie n'a pas d'adresse e-mail. Saisissez-la dans le champ à droite ou choisissez l'étudiant dans la classe." : item.emailSent ? "Renvoyer l'e-mail avec le PDF" : "Envoyer l'e-mail avec le PDF"}
                                   >
                                     {item.isSendingEmail ? <Loader2 className="w-3.5 h-3.5 animate-spin"/> : <Send className="w-3.5 h-3.5" />}
                                     {item.emailSent ? "Renvoyer" : "Envoyer"}
                                   </button>
+                                  {estPremiere && <Aide cle="partage_envoyerBilan" taille={13} />}
                                   <button 
                                     onClick={() => handleTransferToSingleMode(i)}
                                     className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 text-amber-600 rounded-lg hover:bg-amber-100 transition-colors font-bold"
-                                    title="Retirer du lot et corriger manuellement en Mode Unique"
+                                    title="Corriger le texte lu de cette copie, puis la réévaluer (elle reste dans le lot)"
                                   >
                                     <Edit3 className="w-3.5 h-3.5" />
                                     Corriger
                                   </button>
+                                  {estPremiere && <Aide cle="partage_corrigerCopie" taille={13} />}
                                   <button 
                                     onClick={() => handleRetryOcr(i)}
                                     disabled={isRetrying === item.file + "_ocr"}
@@ -3107,6 +3341,8 @@ export default function Home() {
                                     {isRetrying === item.file + "_ocr" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
                                     OCR
                                   </button>
+                                  {estPremiere && <Aide cle="partage_relancerLecture" taille={13} />}
+                                  {doubleEvalSupported && (
                                   <button 
                                     onClick={() => handleSuperviseSingle(i)}
                                     disabled={item.isSupervising || item.isSendingEmail || isGeneratingAll || isSendingBatch}
@@ -3116,9 +3352,10 @@ export default function Home() {
                                     {item.isSupervising ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Brain className="w-3.5 h-3.5" />}
                                     Double éval.
                                   </button>
+                                  )}
                                   {item._comparison && (
                                     <button 
-                                      onClick={() => setComparisonModalData(item._comparison)}
+                                      onClick={() => { setComparisonFinalData(item); setComparisonModalData(item._comparison); }}
                                       className="flex items-center gap-1.5 px-3 py-1.5 bg-fuchsia-50 text-fuchsia-600 rounded-lg hover:bg-fuchsia-100 transition-colors font-bold shadow-sm"
                                       title="Voir les différences avec la première évaluation"
                                     >
@@ -3126,6 +3363,7 @@ export default function Home() {
                                       Diff. double éval.
                                     </button>
                                   )}
+                                  {estPremiere && (doubleEvalSupported || item._comparison) && <Aide cle="partage_doubleEvalCopie" taille={13} />}
                                   <button 
                                     onClick={() => handlePreviewPdf(item)}
                                     className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors font-bold"
@@ -3134,6 +3372,7 @@ export default function Home() {
                                     <Eye className="w-3.5 h-3.5" />
                                     Aperçu
                                   </button>
+                                  {estPremiere && <Aide cle="partage_apercuPdf" taille={13} />}
                                 </div>
                              </div>
                            </div>
@@ -3178,6 +3417,7 @@ export default function Home() {
                                     {classes.find(c => c.id === item.classId)?.students.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
                                   </select>
                                 )}
+                                {estPremiere && <Aide cle="partage_rattacherEleve" taille={13} />}
                               </div>
   
                               <div className="flex items-center gap-1.5 overflow-hidden ml-auto">
@@ -3212,6 +3452,7 @@ export default function Home() {
                          {isRetrying !== null ? <Loader2 className="w-4 h-4 animate-spin"/> : <RefreshCcw className="w-4 h-4"/>}
                          Tout relancer
                        </button>
+                       <Aide cle="partage_relancerEchecs" taille={16} className="self-center" />
                      </div>
                    )}
                    {/* Erreurs */}
@@ -3227,6 +3468,7 @@ export default function Home() {
                        </div>
                        <div className="flex gap-2 shrink-0">
                          {item.primaryResult && (
+                           <>
                            <button
                              onClick={() => {
                                setPendingReviews(prev => prev.map(r => r.file === item.file ? { 
@@ -3244,6 +3486,8 @@ export default function Home() {
                              <CheckCircle className="w-4 h-4" />
                              Garder simple
                            </button>
+                           {i === 0 && <Aide cle="partage_garderSimple" taille={13} />}
+                           </>
                          )}
                          <button 
                            onClick={() => handleRetryFile(item)} 
@@ -3259,23 +3503,24 @@ export default function Home() {
                    ))}
                  </div>
                  <div className="flex justify-end gap-3 pt-4">
-                   <button onClick={() => { setPendingReviews([]); setBatchResults(null); }} className="px-5 py-2.5 text-slate-500 hover:text-slate-700 font-medium">Retour</button>
-                   {pendingReviews.some(r => r.status === 'success' && !r.isOcrOnly && !r._comparison) && (
+                   <button onClick={() => { if (!confirmerAbandonLot("« Retour »")) return; pdfNamesRef.current = {}; setPendingReviews([]); setBatchResults(null); }} className="px-5 py-2.5 text-slate-500 hover:text-slate-700 font-medium">Retour</button><Aide cle="partage_retourLot" taille={16} className="self-center" />
+                   {doubleEvalSupported && pendingReviews.some(r => r.status === 'success' && !r.isOcrOnly && !r._comparison) && (
+                     <>
                      <button
-                       onClick={() => openExternalSupervision('batch', pendingReviews
-                         .filter(r => r.status === 'success' && !r.isOcrOnly && !r._comparison)
-                         .map(r => ({ fileId: r.file, subject: r.subject || batchSubject || 'Sujet', transcription: r.transcription || '', result1: r })))}
+                       onClick={handleDoubleEvalExterneLot}
                        className="px-6 py-3 bg-violet-50 text-violet-700 border border-violet-200 rounded-xl font-bold flex items-center gap-2 hover:bg-violet-100 transition-colors shadow-sm"
                        title="Exporter la double évaluation vers une IA externe (sans clé API)"
                      >
                        <Brain className="w-4 h-4"/> Double éval externe
                      </button>
+                     <Aide cle="doubleEvalExterneLot" taille={18} className="self-center" />
+                     </>
                    )}
                    {pendingReviews.some(r => r.status === 'error' && (!r.transcription || !r.transcription.trim())) && (
                      <button
                        onClick={() => {
                          const failed = pendingReviews.filter(r => r.status === 'error' && (!r.transcription || !r.transcription.trim()));
-                         handlePrepareExternalBatch('ocr', failed.map(r => ({ file: r.file, filePath: `${batchFolder}\\${r.file}`, subject: r.subject || batchSubject || 'Sujet' })));
+                         handlePrepareExternalBatch('ocr', failed.map(r => ({ file: r.file, filePath: joinPath(batchFolder, r.file), subject: r.subject || batchSubject || 'Sujet' })));
                        }}
                        disabled={isExternalBatchLoading}
                        className="px-5 py-3 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl font-bold flex items-center gap-2 hover:bg-amber-100 transition-colors shadow-sm cursor-pointer"
@@ -3288,7 +3533,7 @@ export default function Home() {
                      <button
                        onClick={() => {
                          const failed = pendingReviews.filter(r => r.status === 'error' && r.transcription);
-                         handlePrepareExternalBatch('eval', failed.map(r => ({ file: r.file, filePath: `${batchFolder}\\${r.file}`, transcription: r.transcription, subject: r.subject || batchSubject || 'Sujet' })));
+                         handlePrepareExternalBatch('eval', failed.map(r => ({ file: r.file, filePath: joinPath(batchFolder, r.file), transcription: r.transcription, subject: r.subject || batchSubject || 'Sujet' })));
                        }}
                        disabled={isExternalBatchLoading}
                        className="px-5 py-3 bg-rose-50 text-rose-700 border border-rose-200 rounded-xl font-bold flex items-center gap-2 hover:bg-rose-100 transition-colors shadow-sm cursor-pointer"
@@ -3297,20 +3542,34 @@ export default function Home() {
                        <AlertTriangle className="w-4 h-4"/> Évals échouées (Desktop)
                      </button>
                    )}
-                   <button
-                     onClick={() => handleImportExternalBatch(pendingReviews.some(r => r.status === 'error' && (!r.transcription || !r.transcription.trim())) ? 'ocr' : (pendingReviews.some(r => r.status === 'error') ? 'eval' : 'supervision'))}
-                     disabled={isExternalBatchLoading}
-                     className="px-5 py-3 bg-purple-50 text-purple-700 border border-purple-200 rounded-xl font-bold flex items-center gap-2 hover:bg-purple-100 transition-colors shadow-sm cursor-pointer"
-                     title="Importer automatiquement les fichiers produits par Claude / ChatGPT Desktop dans le sous-dossier livrables"
-                   >
-                     {isExternalBatchLoading ? <Loader2 className="w-4 h-4 animate-spin"/> : <FolderOpen className="w-4 h-4"/>} Importer livrables Desktop
-                   </button>
+                   {(() => {
+                     const typeImport: 'ocr' | 'eval' | 'supervision' = pendingReviews.some(r => r.status === 'error' && (!r.transcription || !r.transcription.trim())) ? 'ocr' : (pendingReviews.some(r => r.status === 'error') ? 'eval' : 'supervision');
+                     const libelleImport = typeImport === 'ocr' ? 'la lecture des copies (OCR)' : typeImport === 'eval' ? 'la correction' : 'la double évaluation';
+                     return (
+                       <>
+                       <div className="flex flex-col items-center gap-1">
+                         <button
+                           onClick={() => handleImportExternalBatch(typeImport)}
+                           disabled={isExternalBatchLoading}
+                           className="px-5 py-3 bg-purple-50 text-purple-700 border border-purple-200 rounded-xl font-bold flex items-center gap-2 hover:bg-purple-100 transition-colors shadow-sm cursor-pointer"
+                           title={`Importe les fichiers produits par Claude / ChatGPT Desktop dans le sous-dossier livrables : ici, ${libelleImport}`}
+                         >
+                           {isExternalBatchLoading ? <Loader2 className="w-4 h-4 animate-spin"/> : <FolderOpen className="w-4 h-4"/>} Importer livrables Desktop
+                         </button>
+                         <span className="text-[10px] text-slate-400">Importera : {libelleImport}</span>
+                       </div>
+                       <Aide cle="partage_livrablesDesktop" taille={16} className="self-center" />
+                       </>
+                     );
+                   })()}
                    <button onClick={handleGenerateAllPdfs} disabled={isGeneratingAll} className="px-6 py-3 bg-slate-100 text-slate-700 rounded-xl font-bold flex items-center gap-2 hover:bg-slate-200 transition-colors border border-slate-200">
                      {isGeneratingAll ? <Loader2 className="w-4 h-4 animate-spin"/> : <FileText className="w-4 h-4"/>} Générer PDFs
                    </button>
+                   <Aide cle="partage_apercuPdf" taille={16} className="self-center" />
                    <button onClick={handleExportExcel} className="px-6 py-3 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl font-bold flex items-center gap-2 hover:bg-emerald-100 transition-colors shadow-sm">
                      <FileSpreadsheet className="w-4 h-4"/> Exporter Excel
                    </button>
+                   <Aide cle="partage_exportExcel" taille={16} className="self-center" />
                    <button 
                       onClick={handleSyncBatchToHistory} 
                       disabled={isBatchLoading}
@@ -3319,9 +3578,11 @@ export default function Home() {
                     >
                       <Database className="w-4 h-4"/> Enregistrer dans l'historique
                     </button>
+                   <Aide cle="pe_enregistrerHistorique" taille={16} className="self-center" />
                    <button onClick={handleSendBatchEmails} disabled={isSendingBatch} className="px-8 py-3 bg-blue-600 text-white rounded-xl font-bold flex items-center gap-2 hover:bg-blue-700 shadow-lg shadow-blue-500/20">
                      {isSendingBatch && <Loader2 className="w-4 h-4 animate-spin"/>} {pendingReviews.some(r => r.status === 'success' && r.emailSent) && pendingReviews.some(r => r.status === 'success' && !r.emailSent) ? "Envoyer les emails restants" : "Envoyer les e-mails"}
                    </button>
+                   <Aide cle="partage_envoyerEmails" taille={18} className="self-center" />
                  </div>
                </motion.div>
             )}
@@ -3404,6 +3665,7 @@ export default function Home() {
                         <label className="text-sm font-bold text-slate-800">
                           Sujet commun de l'épreuve DELF {level} (Optionnel)
                         </label>
+                        <Aide cle="partage_sujetLot" taille={14} />
                       </div>
                       <div className="flex items-center gap-2">
                         {subject && subject.trim() !== batchSubject.trim() && (
@@ -3451,7 +3713,7 @@ export default function Home() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-1.5">
                       <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
-                        <span>📂 Dossier Source (Copies)</span>
+                        <span className="flex items-center gap-1">📂 Dossier Source (Copies) <Aide cle="partage_dossierSource" taille={14} /></span>
                         <span className="text-[10px] text-slate-400 font-normal">PDF, JPG, PNG</span>
                       </label>
                       <div className="flex gap-2">
@@ -3474,7 +3736,7 @@ export default function Home() {
 
                     <div className="space-y-1.5">
                       <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
-                        <span>📂 Dossier Sortie (Bilans & PDFs)</span>
+                        <span className="flex items-center gap-1">📂 Dossier Sortie (Bilans & PDFs) <Aide cle="partage_dossierSortie" taille={14} /></span>
                         <span className="text-[10px] text-slate-400 font-normal">Export automatique</span>
                       </label>
                       <div className="flex gap-2">
@@ -3498,7 +3760,7 @@ export default function Home() {
 
                   <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
                     <div>
-                      <p className="font-bold text-sm text-slate-800">Envoi direct par e-mail</p>
+                      <p className="font-bold text-sm text-slate-800 flex items-center gap-1.5">Envoi direct par e-mail <Aide cle="partage_envoiDirect" taille={14} /></p>
                       <p className="text-xs text-slate-500">Si activé, les bilans PDF seront envoyés aux apprenants automatiquement sans écran de revue préalable.</p>
                     </div>
                     <button
@@ -3521,6 +3783,7 @@ export default function Home() {
                         {isBatchLoading ? <Loader2 className="w-5 h-5 animate-spin"/> : <Zap className="w-5 h-5"/>}
                         {isBatchLoading ? "Évaluation du lot en cours..." : "Lancer le lot complet"}
                       </button>
+                      <Aide cle="partage_lancerLot" taille={18} className="self-center" />
                       <button 
                         onClick={() => handleStartBatch(true)} 
                         disabled={isBatchLoading}
@@ -3530,19 +3793,24 @@ export default function Home() {
                         <Eye className="w-5 h-5"/>
                         OCR seul
                       </button>
+                      <Aide cle="partage_lectureSeule" taille={18} className="self-center" />
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="flex items-center gap-2">
                       <button 
                         onClick={handleResumeLastBatch} 
                         disabled={isBatchLoading}
-                        className="py-3 bg-white text-blue-600 border-2 border-blue-100 rounded-2xl font-bold hover:bg-blue-50 transition-colors disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+                        className="flex-1 py-3 bg-white text-blue-600 border-2 border-blue-100 rounded-2xl font-bold hover:bg-blue-50 transition-colors disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer shadow-xs"
                       >
                         <RotateCcw className="w-4 h-4"/>
                         Récupérer le dernier lot évalué
                       </button>
+                      <Aide cle="partage_dernierLot" taille={16} />
+                      </div>
 
-                      <label className="py-3 bg-white text-indigo-600 border-2 border-indigo-100 rounded-2xl font-bold hover:bg-indigo-50 transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-xs">
+                      <div className="flex items-center gap-2">
+                      <label className="flex-1 py-3 bg-white text-indigo-600 border-2 border-indigo-100 rounded-2xl font-bold hover:bg-indigo-50 transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-xs">
                         <Database className="w-4 h-4 text-indigo-600"/>
                         Charger un lot sauvegardé (.json, .md)
                         <input
@@ -3552,6 +3820,8 @@ export default function Home() {
                           onChange={handleLoadBatchFile}
                         />
                       </label>
+                      <Aide cle="partage_chargerLot" taille={16} />
+                      </div>
                     </div>
 
                     {/* Bloc Automatisation Externe (Claude / ChatGPT Desktop) */}
@@ -3559,10 +3829,16 @@ export default function Home() {
                       <div className="flex items-center gap-2 text-violet-800 font-bold text-sm">
                         <Sparkles className="w-4 h-4 text-violet-600" />
                         <span>Automatisation Externe (Claude / ChatGPT Desktop)</span>
+                        <Aide cle="automatisationExterne" />
                       </div>
                       <p className="text-xs text-violet-700/80 leading-relaxed">
                         Déléguez l'OCR ou la correction à vos applications de bureau ayant accès aux fichiers de l'ordinateur, sans clé API.
                       </p>
+                      <ol className="text-[11px] text-violet-800/80 leading-snug list-decimal pl-4 space-y-0.5">
+                        <li>Choisissez le dossier du lot, puis « Préparer… » : un fichier CONSIGNES.md est créé dans un dossier d'échange (_ECHANGE_IA).</li>
+                        <li>Donnez CONSIGNES.md à votre application d'IA de bureau : elle dépose ses résultats dans le sous-dossier « livrables ».</li>
+                        <li>Revenez ici et cliquez sur « Importer livrables ».</li>
+                      </ol>
                       <div className="grid grid-cols-2 gap-2 pt-1">
                         <button
                           onClick={() => handlePrepareExternalBatch('ocr')}
@@ -3582,7 +3858,7 @@ export default function Home() {
                         </button>
                       </div>
                       <button
-                        onClick={() => handleImportExternalBatch('eval')}
+                        onClick={() => handleImportExternalBatch(lastExternalTaskType)}
                         disabled={isExternalBatchLoading}
                         className="w-full py-2.5 px-3 bg-violet-600 text-white rounded-xl text-xs font-bold hover:bg-violet-700 flex items-center justify-center gap-2 transition-colors shadow-md shadow-violet-500/20 disabled:opacity-50 cursor-pointer"
                         title="Importe automatiquement en 1 clic les fichiers générés dans livrables"
@@ -3590,6 +3866,7 @@ export default function Home() {
                         {isExternalBatchLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin"/> : <FolderOpen className="w-3.5 h-3.5" />}
                         Importer livrables externes (1 clic)
                       </button>
+                      <p className="text-[10px] text-violet-700/70 text-center">Récupère les résultats de la dernière préparation : {lastExternalTaskType === 'ocr' ? 'lecture des copies (OCR)' : 'correction'}.</p>
                     </div>
                   </div>
                 </div>
@@ -3630,6 +3907,7 @@ export default function Home() {
         setComparisonModalData={setComparisonModalData}
         level={level}
         gradingMode={gradingMode}
+        finalData={comparisonFinalData}
       />
 
       {/* Recovery Modal for Supervision failure */}

@@ -1,8 +1,9 @@
 "use client";
 
+import Aide from "@/components/Aide";
 import React, { useState, useEffect } from "react";
 import { 
-  FileText, Settings2, Bookmark, Plus, Trash2, Check, Sliders, 
+  FileText, Settings2, Bookmark, Plus, RotateCcw, Check, Sliders, 
   HelpCircle, AlertCircle, BookOpen, Layers, Languages, ShieldAlert,
   GraduationCap, PenTool
 } from "lucide-react";
@@ -108,32 +109,34 @@ export default function CustomExamConfigPanel({
 
   const handleApplyPreset = (preset: CustomExamPreset) => {
     setSelectedPresetId(preset.id);
-    if (preset.config.maxScore) onMaxScoreChange(preset.config.maxScore);
+    // Toutes les valeurs du modèle sont appliquées (y compris les textes vides) :
+    // un modèle ne doit pas se mélanger avec les réglages précédents.
+    if (preset.config.maxScore !== undefined) onMaxScoreChange(preset.config.maxScore);
     if (preset.config.dictationPenalties && onDictationPenaltiesChange) {
       onDictationPenaltiesChange(preset.config.dictationPenalties);
     }
-    if (preset.config.sourceLanguage && onSourceLangChange) onSourceLangChange(preset.config.sourceLanguage);
-    if (preset.config.targetLanguage && onTargetLangChange) onTargetLangChange(preset.config.targetLanguage);
+    if (preset.config.sourceLanguage !== undefined && onSourceLangChange) onSourceLangChange(preset.config.sourceLanguage);
+    if (preset.config.targetLanguage !== undefined && onTargetLangChange) onTargetLangChange(preset.config.targetLanguage);
     if (preset.config.interpretationMode && onInterpretationModeChange) {
       onInterpretationModeChange(preset.config.interpretationMode);
     }
     if (preset.config.compositionType && onCompositionTypeChange) {
       onCompositionTypeChange(preset.config.compositionType);
     }
-    if (preset.config.corpusText && onCorpusTextChange) {
-      onCorpusTextChange(preset.config.corpusText);
+    if (onCorpusTextChange) {
+      onCorpusTextChange(preset.config.corpusText ?? "");
     }
     if (preset.config.disableStandardGrid !== undefined && onDisableStandardGridChange) {
       onDisableStandardGridChange(preset.config.disableStandardGrid);
     }
-    if (preset.config.targetLanguage && onCompositionLanguageChange) {
+    if (preset.config.targetLanguage !== undefined && onCompositionLanguageChange) {
       onCompositionLanguageChange(preset.config.targetLanguage);
     }
-    if (preset.config.customInstructions && onCustomInstructionsChange) {
-      onCustomInstructionsChange(preset.config.customInstructions);
+    if (onCustomInstructionsChange) {
+      onCustomInstructionsChange(preset.config.customInstructions ?? "");
     }
-    if (preset.config.referenceText && onReferenceTextChange) onReferenceTextChange(preset.config.referenceText);
-    if (preset.config.modelTranslation && onModelTranslationChange) onModelTranslationChange(preset.config.modelTranslation);
+    if (onReferenceTextChange) onReferenceTextChange(preset.config.referenceText ?? "");
+    if (onModelTranslationChange) onModelTranslationChange(preset.config.modelTranslation ?? "");
   };
 
   const handleSavePreset = () => {
@@ -207,6 +210,7 @@ export default function CustomExamConfigPanel({
                   </option>
                 ))}
               </select>
+              <Aide cle="c_cfgCharger" taille={13} />
             </div>
           )}
 
@@ -230,9 +234,9 @@ export default function CustomExamConfigPanel({
               <button 
                 onClick={() => setIsSavingPreset(false)}
                 className="text-slate-400 hover:text-slate-600 p-0.5 rounded cursor-pointer"
-                title="Annuler"
+                title="Annuler (ne pas enregistrer)"
               >
-                <Trash2 className="w-3.5 h-3.5" />
+                <RotateCcw className="w-3.5 h-3.5" />
               </button>
             </div>
           ) : (
@@ -245,6 +249,7 @@ export default function CustomExamConfigPanel({
               Enregistrer modèle
             </button>
           )}
+          <Aide cle="c_cfgEnregistrer" taille={14} />
         </div>
       </div>
 
@@ -260,6 +265,7 @@ export default function CustomExamConfigPanel({
                     <FileText className="w-3.5 h-3.5 text-indigo-600" />
                     Texte officiel de la dictée (Texte de référence)
                     <span className="text-rose-500">*</span>
+                    <Aide cle="c_cfgTexteDictee" taille={13} />
                   </label>
                   <span className="text-[10px] text-slate-400 font-medium">
                     {referenceText.trim().split(/\s+/).filter(Boolean).length} mots
@@ -280,8 +286,10 @@ export default function CustomExamConfigPanel({
                     <Settings2 className="w-3.5 h-3.5 text-indigo-600" />
                     Barème des pénalités arithmétiques
                   </span>
+                  <Aide cle="c_cfgPenalites" taille={13} />
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-slate-600 font-medium">Note de départ :</span>
+                    <Aide cle="c_cfgNoteDepart" taille={13} />
                     <input
                       type="number"
                       min={1}
@@ -396,6 +404,7 @@ export default function CustomExamConfigPanel({
                       className="rounded text-indigo-600 border-slate-300 focus:ring-indigo-500/20"
                     />
                     <span>Autoriser une note finale négative (sans plancher à 0)</span>
+                    <Aide cle="c_cfgOptionsNote" taille={13} />
                   </label>
                 </div>
               </div>
@@ -410,6 +419,7 @@ export default function CustomExamConfigPanel({
               <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
                 <BookOpen className="w-3.5 h-3.5 text-indigo-600" />
                 Texte source original <span className="text-rose-500">*</span>
+                <Aide cle="c_cfgTexteSource" taille={13} />
               </label>
               <textarea
                 value={sourceText}
@@ -436,6 +446,7 @@ export default function CustomExamConfigPanel({
               <div className="flex items-center gap-1.5">
                 <Languages className="w-3.5 h-3.5 text-indigo-600" />
                 <span className="font-semibold text-slate-700">Langues :</span>
+                <Aide cle="c_cfgLangues" taille={13} />
                 <input
                   type="text"
                   value={sourceLang}
@@ -476,6 +487,7 @@ export default function CustomExamConfigPanel({
               <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
                 <Layers className="w-3.5 h-3.5 text-indigo-600" />
                 Énoncé des exercices / Questions <span className="text-rose-500">*</span>
+                <Aide cle="c_cfgEnonce" taille={13} />
               </label>
               <textarea
                 value={exerciseSubject}
@@ -489,6 +501,7 @@ export default function CustomExamConfigPanel({
               <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
                 <Check className="w-3.5 h-3.5 text-emerald-600" />
                 Corrigé officiel & Barème par item <span className="text-rose-500">*</span>
+                <Aide cle="c_cfgCorrige" taille={13} />
               </label>
               <textarea
                 value={answerKey}
@@ -525,6 +538,7 @@ export default function CustomExamConfigPanel({
               <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
                 <FileText className="w-3.5 h-3.5 text-indigo-600" />
                 Discours source original (Texte ou transcription du discours prononcé) <span className="text-rose-500">*</span>
+                <Aide cle="c_cfgEnonce" taille={13} />
               </label>
               <textarea
                 value={sourceSpeech}
@@ -537,6 +551,7 @@ export default function CustomExamConfigPanel({
             <div className="flex flex-wrap items-center gap-4 text-xs md:col-span-2 bg-white/70 p-3 rounded-xl border border-slate-200/60">
               <div className="flex items-center gap-2">
                 <span className="font-semibold text-slate-700">Modalité :</span>
+                <Aide cle="c_cfgModalite" taille={13} />
                 <div className="flex p-0.5 bg-slate-100 rounded-lg border border-slate-200">
                   <button
                     type="button"
@@ -602,6 +617,7 @@ export default function CustomExamConfigPanel({
               <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
                 <PenTool className="w-3.5 h-3.5 text-indigo-600" />
                 Type de composition à évaluer :
+                <Aide cle="c_cfgTypeComposition" taille={13} />
               </label>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                 <button
@@ -662,6 +678,7 @@ export default function CustomExamConfigPanel({
               <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
                 <FileText className="w-3.5 h-3.5 text-indigo-600" />
                 Sujet / Énoncé de la composition <span className="text-rose-500">*</span>
+                <Aide cle="c_cfgEnonce" taille={13} />
               </label>
               <textarea
                 value={compositionSubject}
@@ -733,6 +750,7 @@ export default function CustomExamConfigPanel({
                   <span className="text-xs font-bold text-slate-800">
                     Désactiver la grille de critères officielle et utiliser mes propres critères rédigés
                   </span>
+                  <Aide cle="c_cfgGrilleLibre" taille={13} />
                   <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
                     Remplace la grille standard ({getCompositionTypeLabel(compositionType)}) par votre barème ou vos critères personnalisés rédigés ci-dessous.
                   </p>
@@ -802,6 +820,7 @@ export default function CustomExamConfigPanel({
               ) : (
                 <span>Consignes spécifiques ou critères de correction rédigés (optionnel)</span>
               )}
+              <Aide cle="c_cfgConsignes" taille={13} />
             </label>
             {examType === 'composition' && disableStandardGrid ? (
               <textarea
