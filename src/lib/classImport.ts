@@ -6,7 +6,7 @@
  * - la première ligne peut contenir des titres de colonnes ; elle n'est ignorée
  *   que si elle en contient vraiment ;
  * - le nom de l'élève est pris dans une colonne « Nom complet » / « Élève », ou
- *   reconstitué à partir de deux colonnes « Prénom » et « Nom » ;
+ *   reconstitué à partir de deux colonnes « Nom » et « Prénom » ;
  * - l'e-mail est facultatif.
  *
  * Fonction pure (sans dépendance au navigateur), testable isolément.
@@ -79,7 +79,7 @@ export function parseStudentSheet(sheetName: string, rows: unknown[][]): Importe
 
   if (firstCol !== -1 && lastCol !== -1) {
     mode = "split";
-    columnsDescription = `Prénom : ${label(firstCol)} + Nom : ${label(lastCol)}`;
+    columnsDescription = `Nom : ${label(lastCol)} + Prénom : ${label(firstCol)}`;
   } else if (fullCol !== -1) {
     mode = "full";
     columnsDescription = `Nom de l'élève : ${label(fullCol)}`;

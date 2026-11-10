@@ -34,7 +34,7 @@ const AIDE_GENERAL = {
     texte: [
       "Importez un fichier Excel (.xlsx, .xls), LibreOffice ou CSV. Une fenêtre vous montre le format attendu et un aperçu avant tout enregistrement.",
       "• Chaque onglet du classeur devient une classe, qui porte le nom de l'onglet.",
-      "• Ligne 1 : les titres de colonnes (« Prénom », « Nom », « E-mail »… ou « Nom complet »).",
+      "• Ligne 1 : les titres de colonnes (« Nom », « Prénom », « E-mail »… ou « Nom complet »).",
       "• Une ligne par élève ; l'e-mail est facultatif.",
       "Si une classe du même nom existe déjà, les nouveaux élèves y sont ajoutés et les élèves déjà présents sont mis à jour.",
     ],

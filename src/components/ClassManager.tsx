@@ -160,14 +160,14 @@ export default function ClassManager() {
   const downloadTemplate = () => {
     const wb = XLSX.utils.book_new();
     const exemple1 = XLSX.utils.aoa_to_sheet([
-      ["Prénom", "Nom", "E-mail"],
-      ["Léa", "Durand", "lea.durand@exemple.fr"],
-      ["Minh Anh", "Nguyen", "minhanh.nguyen@exemple.fr"],
-      ["Paul", "Martin", ""],
+      ["Nom", "Prénom", "E-mail"],
+      ["Durand", "Léa", "lea.durand@exemple.fr"],
+      ["Nguyen", "Minh Anh", "minhanh.nguyen@exemple.fr"],
+      ["Martin", "Paul", ""],
     ]);
     const exemple2 = XLSX.utils.aoa_to_sheet([
-      ["Prénom", "Nom", "E-mail"],
-      ["Sofia", "Rossi", "sofia.rossi@exemple.fr"],
+      ["Nom", "Prénom", "E-mail"],
+      ["Rossi", "Sofia", "sofia.rossi@exemple.fr"],
     ]);
     exemple1["!cols"] = exemple2["!cols"] = [{ wch: 16 }, { wch: 18 }, { wch: 32 }];
     XLSX.utils.book_append_sheet(wb, exemple1, "B2 groupe 1");
@@ -272,15 +272,15 @@ export default function ClassManager() {
                           <tr><th className="px-2 py-1 border-r border-slate-200"></th><th className="px-4 py-1 border-r border-slate-200">A</th><th className="px-4 py-1 border-r border-slate-200">B</th><th className="px-4 py-1">C</th></tr>
                         </thead>
                         <tbody>
-                          <tr className="font-bold text-slate-800"><td className="px-2 py-1 bg-slate-100 text-slate-500 border-r border-slate-200">1</td><td className="px-4 py-1 border-r border-slate-100">Prénom</td><td className="px-4 py-1 border-r border-slate-100">Nom</td><td className="px-4 py-1">E-mail</td></tr>
-                          <tr><td className="px-2 py-1 bg-slate-100 text-slate-500 border-r border-slate-200">2</td><td className="px-4 py-1 border-r border-slate-100">Léa</td><td className="px-4 py-1 border-r border-slate-100">Durand</td><td className="px-4 py-1">lea.durand@exemple.fr</td></tr>
-                          <tr><td className="px-2 py-1 bg-slate-100 text-slate-500 border-r border-slate-200">3</td><td className="px-4 py-1 border-r border-slate-100">Paul</td><td className="px-4 py-1 border-r border-slate-100">Martin</td><td className="px-4 py-1 text-slate-400 italic">(vide)</td></tr>
+                          <tr className="font-bold text-slate-800"><td className="px-2 py-1 bg-slate-100 text-slate-500 border-r border-slate-200">1</td><td className="px-4 py-1 border-r border-slate-100">Nom</td><td className="px-4 py-1 border-r border-slate-100">Prénom</td><td className="px-4 py-1">E-mail</td></tr>
+                          <tr><td className="px-2 py-1 bg-slate-100 text-slate-500 border-r border-slate-200">2</td><td className="px-4 py-1 border-r border-slate-100">Durand</td><td className="px-4 py-1 border-r border-slate-100">Léa</td><td className="px-4 py-1">lea.durand@exemple.fr</td></tr>
+                          <tr><td className="px-2 py-1 bg-slate-100 text-slate-500 border-r border-slate-200">3</td><td className="px-4 py-1 border-r border-slate-100">Martin</td><td className="px-4 py-1 border-r border-slate-100">Paul</td><td className="px-4 py-1 text-slate-400 italic">(vide)</td></tr>
                         </tbody>
                       </table>
                     </div>
                     <ul className="list-disc pl-5 space-y-1">
                       <li><strong>Ligne 1 : les titres des colonnes.</strong> L'ordre des colonnes n'a pas d'importance : elles sont reconnues par leur titre.</li>
-                      <li><strong>Nom de l'élève</strong> : soit deux colonnes « Prénom » et « Nom » (elles sont réunies), soit une seule colonne « Nom complet » (ou « Élève », « Étudiant », « Apprenant »).</li>
+                      <li><strong>Nom de l'élève</strong> : soit deux colonnes « Nom » et « Prénom » (elles sont réunies), soit une seule colonne « Nom complet » (ou « Élève », « Étudiant », « Apprenant »).</li>
                       <li><strong>E-mail</strong> (facultatif) : une colonne « E-mail », « Mail » ou « Courriel ». Il sert à reconnaître l'élève sur sa copie et à lui envoyer son bilan.</li>
                       <li>Une ligne par élève ; les lignes vides et les doublons sont ignorés. Les autres colonnes (numéro, date de naissance…) sont ignorées.</li>
                       <li>Si une classe du même nom existe déjà, les nouveaux élèves y sont <strong>ajoutés</strong> et les élèves déjà présents (même nom ou même e-mail) sont mis à jour. Rien n'est supprimé.</li>
