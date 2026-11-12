@@ -4,6 +4,12 @@ Application locale de **correction et de création d'épreuves assistée par IA*
 
 Elle fonctionne avec une clé API Google Gemini (une clé gratuite suffit pour commencer), **ou sans aucune clé API** : vous confiez alors le travail à l'IA de votre choix (Claude, ChatGPT, Gemini…) dans le cadre de votre abonnement, par simple copier-coller.
 
+## ⬇️ Télécharger l'application
+
+**[Cliquez ici pour télécharger la dernière version (fichier ZIP)](https://github.com/le-prof-et-l-ia/evaluation-pe-po/archive/refs/heads/main.zip)**
+
+Ce lien fournit toujours la version la plus récente. Consultez ensuite la section [Avant le premier lancement](#avant-le-premier-lancement).
+
 ## Ce que fait l'application
 
 ### Correction
@@ -34,7 +40,7 @@ Elle fonctionne avec une clé API Google Gemini (une clé gratuite suffit pour c
 ## Avant le premier lancement
 
 1. **Installez Node.js** (version LTS) depuis [https://nodejs.org/](https://nodejs.org/), puis redémarrez l'ordinateur si l'application ne le détecte pas.
-2. **Extrayez l'archive** (depuis GitHub : bouton vert **Code**, puis **Download ZIP**) dans un dossier de votre choix, de préférence en dehors de OneDrive, iCloud ou Google Drive (par exemple `C:\Correcteur` ou `Documents/Correcteur`). Ne lancez jamais l'application depuis l'intérieur du fichier ZIP.
+2. **Téléchargez puis extrayez l'archive** ([lien direct vers le ZIP](https://github.com/le-prof-et-l-ia/evaluation-pe-po/archive/refs/heads/main.zip), ou sur GitHub : bouton vert **Code**, puis **Download ZIP**) dans un dossier de votre choix, de préférence en dehors de OneDrive, iCloud ou Google Drive (par exemple `C:\Correcteur` ou `Documents/Correcteur`). Ne lancez jamais l'application depuis l'intérieur du fichier ZIP.
 3. **Prévoyez une connexion Internet et quelques minutes** : au premier lancement, l'application télécharge ses composants puis se compile. Les lancements suivants sont rapides.
 
 ## Lancement
