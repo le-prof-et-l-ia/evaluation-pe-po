@@ -7,11 +7,21 @@ export interface WhitelistMedia {
   siteQuery: string;
 }
 
+/**
+ * Délais d'attente d'une réponse de Gemini pour la génération de sujets.
+ * Un dossier C1 de plusieurs textes peut demander 1 à 3 minutes quand les serveurs
+ * sont chargés ; l'interface prévient l'utilisateur au bout de 30 secondes et lui
+ * permet d'annuler.
+ */
+export const DELAI_GEMINI_GRATUIT_MS = 150000;
+export const DELAI_GEMINI_PAYANT_MS = 180000;
+
 /** Longueur maximale (en caractères) du texte source transmis à l'IA. */
 export const MAX_SOURCE_CHARS = 15000;
 
 export const MEDIA_WHITELIST: WhitelistMedia[] = [
   { domain: 'francetvinfo.fr', name: 'Franceinfo', siteQuery: 'site:francetvinfo.fr' },
+  { domain: 'franceinfo.fr', name: 'Franceinfo', siteQuery: 'site:franceinfo.fr' },
   { domain: 'france24.com', name: 'France 24', siteQuery: 'site:france24.com' },
   { domain: 'rfi.fr', name: 'RFI', siteQuery: 'site:rfi.fr' },
   { domain: 'radiofrance.fr', name: 'Radio France', siteQuery: 'site:radiofrance.fr' },
@@ -173,8 +183,158 @@ export function decodeHtmlEntities(str: string): string {
     .trim();
 }
 
+const BROWSER_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.8'
+};
+
+/** Domaines de la liste blanche, sans chemin (« arte.tv/info » devient « arte.tv »). */
+function domainesListeBlanche(): string[] {
+  return [...new Set(MEDIA_WHITELIST.map(m => m.domain.split('/')[0]))];
+}
+
+/** Vrai si l'adresse appartient à un média de la liste blanche (domaine ou sous-domaine). */
+export function estDansListeBlanche(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return domainesListeBlanche().some(d => host === d || host.endsWith('.' + d));
+  } catch {
+    return false;
+  }
+}
+
+function sansAccents(s: string): string {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
+
+/** Nombre de mots du thème (4 lettres et plus) présents dans le titre ou l'extrait. */
+function scorePertinence(theme: string, texte: string): number {
+  const cible = sansAccents(texte);
+  return sansAccents(theme)
+    .split(/[^a-z0-9]+/)
+    .filter(m => m.length >= 4)
+    .filter(m => cible.includes(m)).length;
+}
+
+/** Contenu texte d'une balise d'un élément RSS (CDATA et balises HTML retirés). */
+function texteBalise(item: string, balise: string): string {
+  const m = item.match(new RegExp(`<${balise}>([\\s\\S]*?)</${balise}>`));
+  if (!m) return '';
+  return decodeHtmlEntities(m[1].replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').replace(/<[^>]+>/g, '').trim());
+}
+
+/**
+ * Recherche via le flux RSS de Bing Actualités, limitée aux médias de la liste blanche.
+ * Au-delà d'environ 15 filtres « site: », Bing renvoie un flux vide : les médias sont
+ * donc interrogés par lots, en parallèle, puis les résultats entrelacés pour varier les sources.
+ */
+async function rechercheBingActualites(theme: string): Promise<CandidateArticle[]> {
+  const domaines = domainesListeBlanche();
+  const lots: string[][] = [];
+  for (let i = 0; i < domaines.length; i += 6) lots.push(domaines.slice(i, i + 6));
+  const reponses = await Promise.allSettled(lots.map(lot => rechercheBingActualitesLot(theme, lot)));
+  const listes = reponses.map(r => (r.status === 'fulfilled' ? r.value : []));
+  const resultats: CandidateArticle[] = [];
+  for (let rang = 0; listes.some(l => rang < l.length); rang++) {
+    for (const liste of listes) if (rang < liste.length) resultats.push(liste[rang]);
+  }
+  return resultats;
+}
+
+/**
+ * Un lot de la recherche Bing Actualités. Les liens du flux passent par une
+ * redirection Bing : l'adresse réelle est dans le paramètre « url ».
+ */
+async function rechercheBingActualitesLot(theme: string, domaines: string[]): Promise<CandidateArticle[]> {
+  const sites = domaines.map(d => `site:${d}`).join(' OR ');
+  const q = encodeURIComponent(`${theme} (${sites})`);
+  const res = await fetch(`https://www.bing.com/news/search?q=${q}&format=rss&mkt=fr-FR&count=50`, {
+    headers: BROWSER_HEADERS,
+    signal: AbortSignal.timeout(12000)
+  });
+  if (!res.ok) {
+    console.warn(`[Subject Search] Bing Actualités : statut ${res.status}`);
+    return [];
+  }
+  const xml = await res.text();
+  const resultats: CandidateArticle[] = [];
+  for (const m of xml.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
+    const item = m[1];
+    const lien = texteBalise(item, 'link');
+    let url = lien;
+    try {
+      url = new URL(lien).searchParams.get('url') || lien;
+    } catch {}
+    if (!estDansListeBlanche(url) || /guide-achat|bons-plans|\/shopping\//i.test(url)) continue;
+    const publishedDate = texteBalise(item, 'pubDate') || undefined;
+    if (!isWithin9Months(publishedDate)) continue;
+    let title = texteBalise(item, 'title') || theme;
+    if (title.length > 120) title = title.slice(0, 117) + '...';
+    resultats.push({
+      title,
+      url,
+      mediaName: getMediaNameFromUrl(url),
+      publishedDate,
+      snippet: texteBalise(item, 'description')
+    });
+  }
+  return resultats;
+}
+
+/**
+ * Recherche via la version HTML de DuckDuckGo (repli). DuckDuckGo bloque souvent
+ * les requêtes automatisées (statut 202, page de vérification) : on l'ignore alors.
+ */
+async function rechercheDuckDuckGo(theme: string): Promise<CandidateArticle[]> {
+  const siteGroup = MEDIA_WHITELIST.map(m => m.siteQuery).join(' OR ');
+  const query = encodeURIComponent(`${theme} (${siteGroup})`);
+  const ddgRes = await fetch(`https://html.duckduckgo.com/html/?q=${query}`, {
+    headers: BROWSER_HEADERS,
+    signal: AbortSignal.timeout(12000)
+  });
+  if (ddgRes.status !== 200) {
+    console.warn(`[Subject Search] DuckDuckGo : statut ${ddgRes.status} (requête probablement bloquée)`);
+    return [];
+  }
+  const html = await ddgRes.text();
+  const linkRegex = /<a[^>]*class="result__url"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+  const snippetRegex = /<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
+
+  const snippets: string[] = [];
+  let sm;
+  while ((sm = snippetRegex.exec(html)) !== null) {
+    snippets.push(decodeHtmlEntities(sm[1].replace(/<[^>]+>/g, '').trim()));
+  }
+
+  const resultats: CandidateArticle[] = [];
+  let lm;
+  let sIdx = 0;
+  while ((lm = linkRegex.exec(html)) !== null) {
+    const rawHref = lm[1];
+    let actualUrl = rawHref;
+    if (rawHref.includes('uddg=')) {
+      try {
+        const u = new URL(rawHref, 'https://duckduckgo.com');
+        actualUrl = decodeURIComponent(u.searchParams.get('uddg') || rawHref);
+      } catch {}
+    }
+    const snippet = snippets[sIdx] || '';
+    sIdx++;
+    if (!estDansListeBlanche(actualUrl) || actualUrl.includes('ad_domain')) continue;
+    const mediaName = getMediaNameFromUrl(actualUrl);
+    let title = snippet.split(' - ')[0] || lm[2]?.replace(/<[^>]+>/g, '').trim() || `${mediaName} - ${theme}`;
+    title = decodeHtmlEntities(title);
+    if (title.length > 120) title = title.slice(0, 117) + '...';
+    resultats.push({ title, url: actualUrl, mediaName, snippet });
+  }
+  return resultats;
+}
+
 /**
  * Recherche des articles récents sur les diffuseurs et médias d'information de la liste blanche.
+ * Source principale : Bing Actualités (RSS) ; repli : DuckDuckGo.
+ * Google Actualités n'est plus utilisé : ses liens sont des redirections chiffrées
+ * que ni Jina Reader ni une requête directe ne savent suivre.
  */
 export async function searchWhitelistArticles(theme: string): Promise<CandidateArticle[]> {
   const queryTheme = theme.trim();
@@ -182,114 +342,34 @@ export async function searchWhitelistArticles(theme: string): Promise<CandidateA
 
   const candidates: CandidateArticle[] = [];
   const seenUrls = new Set<string>();
-
-  // 1. Recherche via DuckDuckGo avec regroupement des domaines de la liste blanche
-  try {
-    const siteGroup = MEDIA_WHITELIST.map(m => m.siteQuery).join(' OR ');
-    const query = encodeURIComponent(`${queryTheme} (${siteGroup})`);
-    const ddgRes = await fetch(`https://html.duckduckgo.com/html/?q=${query}`, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.8'
-      },
-      signal: AbortSignal.timeout(12000)
-    });
-
-    if (ddgRes.ok) {
-      const html = await ddgRes.text();
-      const linkRegex = /<a[^>]*class="result__url"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
-      const snippetRegex = /<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
-      
-      const snippets: string[] = [];
-      let sm;
-      while ((sm = snippetRegex.exec(html)) !== null) {
-        snippets.push(decodeHtmlEntities(sm[1].replace(/<[^>]+>/g, '').trim()));
-      }
-
-      let lm;
-      let sIdx = 0;
-      while ((lm = linkRegex.exec(html)) !== null && candidates.length < 15) {
-        const rawHref = lm[1];
-        let actualUrl = rawHref;
-        if (rawHref.includes('uddg=')) {
-          try {
-            const u = new URL(rawHref, 'https://duckduckgo.com');
-            actualUrl = decodeURIComponent(u.searchParams.get('uddg') || rawHref);
-          } catch {}
-        }
-
-        // Vérifier que l'URL appartient bien à la liste blanche et n'est pas une publicité
-        const isWhitelisted = MEDIA_WHITELIST.some(m => actualUrl.includes(m.domain));
-        if (isWhitelisted && !actualUrl.includes('ad_domain') && !actualUrl.includes('bing.com') && !seenUrls.has(actualUrl)) {
-          seenUrls.add(actualUrl);
-          const mediaName = getMediaNameFromUrl(actualUrl);
-          const snippet = snippets[sIdx] || '';
-          
-          // Essayer d'extraire un titre plus propre
-          let title = snippet.split(' - ')[0] || lm[2]?.replace(/<[^>]+>/g, '').trim() || `${mediaName} - ${queryTheme}`;
-          title = decodeHtmlEntities(title);
-          if (title.length > 120) title = title.slice(0, 117) + '...';
-
-          candidates.push({
-            title,
-            url: actualUrl,
-            mediaName,
-            snippet
-          });
-        }
-        sIdx++;
-      }
+  const ajouter = (liste: CandidateArticle[]) => {
+    for (const c of liste) {
+      if (seenUrls.has(c.url)) continue;
+      seenUrls.add(c.url);
+      candidates.push(c);
     }
+  };
+
+  try {
+    ajouter(await rechercheBingActualites(queryTheme));
   } catch (err) {
-    console.warn('[Subject Search] Erreur recherche DuckDuckGo :', err);
+    console.warn('[Subject Search] Erreur recherche Bing Actualités :', err);
   }
 
-  // 2. Recherche complémentaire via Google News RSS si moins de 3 résultats
   if (candidates.length < 3) {
     try {
-      const topDomains = MEDIA_WHITELIST.slice(0, 10).map(m => `site:${m.domain}`).join(' OR ');
-      const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(queryTheme + ' (' + topDomains + ')')}&hl=fr&gl=FR&ceid=FR:fr`;
-      const rssRes = await fetch(rssUrl, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-        signal: AbortSignal.timeout(10000)
-      });
-      if (rssRes.ok) {
-        const xml = await rssRes.text();
-        const itemMatches = [...xml.matchAll(/<item>[\s\S]*?<title>(.*?)<\/title>[\s\S]*?<link>(.*?)<\/link>[\s\S]*?<pubDate>(.*?)<\/pubDate>/g)];
-        for (const m of itemMatches) {
-          if (candidates.length >= 15) break;
-          const rawTitle = m[1].replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').trim();
-          const pubDate = m[3].trim();
-          
-          // Déterminer le média à partir du titre RSS (souvent "Titre - France 24")
-          let mediaName = 'Presse francophone';
-          let cleanTitle = rawTitle;
-          if (rawTitle.includes(' - ')) {
-            const parts = rawTitle.split(' - ');
-            const lastPart = parts[parts.length - 1].trim();
-            const matchedMedia = MEDIA_WHITELIST.find(media => lastPart.toLowerCase().includes(media.name.toLowerCase()));
-            if (matchedMedia) {
-              mediaName = matchedMedia.name;
-              cleanTitle = parts.slice(0, -1).join(' - ').trim();
-            }
-          }
-
-          if (isWithin9Months(pubDate)) {
-            candidates.push({
-              title: cleanTitle,
-              url: m[2].trim(),
-              mediaName,
-              publishedDate: pubDate
-            });
-          }
-        }
-      }
+      ajouter(await rechercheDuckDuckGo(queryTheme));
     } catch (err) {
-      console.warn('[Subject Search] Erreur recherche Google News RSS :', err);
+      console.warn('[Subject Search] Erreur recherche DuckDuckGo :', err);
     }
   }
 
-  return candidates;
+  // Les articles dont le titre ou l'extrait reprend les mots du thème passent en tête (tri stable).
+  return candidates
+    .map((c, i) => ({ c, i, score: scorePertinence(queryTheme, `${c.title} ${c.snippet || ''}`) }))
+    .sort((a, b) => b.score - a.score || a.i - b.i)
+    .map(x => x.c)
+    .slice(0, 15);
 }
 
 /**
@@ -307,7 +387,7 @@ export const NO_ARTICLE_FOUND_MESSAGE =
  * réellement extrait (jusqu'à `maxTries` essais). Renvoie `null` si aucun ne
  * convient : l'appelant doit alors prévenir l'utilisateur, jamais inventer une source.
  */
-export async function findArticleForTheme(theme: string, maxTries = 3): Promise<ExtractedArticle | null> {
+export async function findArticleForTheme(theme: string, maxTries = 5): Promise<ExtractedArticle | null> {
   const candidates = await searchWhitelistArticles(theme);
   for (const candidate of (candidates || []).slice(0, maxTries)) {
     const article = await extractArticleContent(candidate.url, candidate.mediaName);
@@ -688,8 +768,8 @@ Générez maintenant ${articleCount} article(s) déclencheur(s) au format JSON d
     undefined,
     2,
     1,
-    35000,
-    60000
+    DELAI_GEMINI_GRATUIT_MS,
+    DELAI_GEMINI_PAYANT_MS
   );
 
   let parsedData: any = null;
@@ -747,8 +827,8 @@ ${currentBody}`;
           undefined,
           2,
           1,
-          30000,
-          50000
+          DELAI_GEMINI_GRATUIT_MS,
+          DELAI_GEMINI_PAYANT_MS
         );
 
         if (adjustmentResult && adjustmentResult.trim().length > 50) {
@@ -856,8 +936,8 @@ ${JSON.stringify(EXEMPLE_JSON_CE, null, 2)}`;
     undefined,
     2,
     1,
-    35000,
-    60000
+    DELAI_GEMINI_GRATUIT_MS,
+    DELAI_GEMINI_PAYANT_MS
   );
 
   let parsed: any = null;

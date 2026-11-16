@@ -43,6 +43,7 @@ import {
   countFrenchWords
 } from "@/lib/subjectGeneratorService";
 import Aide from "@/components/Aide";
+import { useAttenteGemini, estAnnulation } from "@/components/AvertissementAttenteGemini";
 import { type KeyConfig } from "@/lib/retryUtils";
 
 interface SubjectGeneratorViewProps {
@@ -83,6 +84,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
   // ── Processing & Data State ───────────────────────────────────────────────
   const [isSearching, setIsSearching] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const attente = useAttenteGemini();
   const [progressStep, setProgressStep] = useState<string>("" );
   const [candidates, setCandidates] = useState<CandidateArticle[]>([]);
   const [selectedCandidate, setSelectedCandidate] = useState<CandidateArticle | null>(null);
@@ -228,6 +230,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
 
       const genRes = await fetch("/api/po/subject", {
         method: "POST",
+        signal: attente.demarrer(),
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "generate",
@@ -245,8 +248,9 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
 
       afficherResultat(genData.result);
     } catch (err: any) {
-      setErrorMsg(err.message || "Erreur inconnue lors de la génération");
+      setErrorMsg(estAnnulation(err) ? "Génération annulée. Vous pouvez réessayer plus tard." : err.message || "Erreur inconnue lors de la génération");
     } finally {
+      attente.terminer();
       setIsGenerating(false);
       setProgressStep("");
     }
@@ -308,6 +312,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-y-auto p-8 gap-8 max-w-7xl mx-auto w-full print:p-0 print:max-w-none">
+      {attente.fenetre}
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-6 print:hidden">
         <div>
@@ -609,7 +614,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
               ))}
             </div>
             <p className="mt-3 text-[11px] text-slate-500 leading-snug">
-              La recherche d'articles interroge DuckDuckGo et Google Actualités ; le texte est extrait via le service r.jina.ai.
+              La recherche d'articles interroge Bing Actualités (DuckDuckGo en secours) ; le texte est extrait via le service r.jina.ai.
             </p>
           </div>
         </div>
