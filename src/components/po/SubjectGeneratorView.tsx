@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { flushSync } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Sparkles,
@@ -22,8 +23,17 @@ import {
   Info,
   ChevronRight,
   FileCheck,
-  Mic
+  Mic,
+  Brain,
+  Pencil,
+  Undo2,
+  Check,
+  Printer
 } from "lucide-react";
+import GenerateurExterneModal from "@/components/generateurs/GenerateurExterneModal";
+import EditeurSujet from "@/components/generateurs/EditeurSujet";
+import ChoixMoteur, { useMoteurGenerateur } from "@/components/generateurs/ChoixMoteur";
+import { MODELE_IA_EXTERNE, type ParamsGenerationExterne } from "@/lib/generateurs/externe";
 import {
   CandidateArticle,
   ExtractedArticle,
@@ -81,6 +91,26 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
   const [activeDocTab, setActiveDocTab] = useState<number>(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [copySuccess, setCopySuccess] = useState<string | null>(null);
+
+  // Moteur (Gemini ou IA externe) et modification du sujet avant export
+  const [moteur, setMoteur] = useMoteurGenerateur();
+  const [paramsExterne, setParamsExterne] = useState<ParamsGenerationExterne | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [resultInitial, setResultInitial] = useState<SubjectGenerationResult | null>(null);
+
+  /** Affiche un sujet tout juste généré (ou importé d'une IA externe). */
+  const afficherResultat = (r: SubjectGenerationResult) => {
+    setResult(r);
+    setResultInitial(r);
+    setEditing(false);
+    setActiveDocTab(0);
+  };
+
+  /** Imprime toujours la mise en page normale, même depuis l'écran de modification. */
+  const handlePrint = () => {
+    flushSync(() => setEditing(false));
+    window.print();
+  };
 
   // ── Handlers ───────────────────────────────────────────────────────────────
 
@@ -169,6 +199,30 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
         setProgressStep(`Recherche d'un article pertinent sur les ${MEDIA_WHITELIST.length} diffuseurs...`);
       }
 
+      // Préparation par une IA externe : l'application fournit l'article source,
+      // l'IA de l'abonnement de l'enseignant rédige le sujet.
+      if (moteur === "externe") {
+        if (!sourceArticleData) {
+          const findRes = await fetch("/api/po/subject", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "find", theme: theme.trim() })
+          });
+          const findData = await findRes.json();
+          if (!findRes.ok || !findData.article) throw new Error(findData.error || "Aucun article exploitable n'a été trouvé.");
+          sourceArticleData = findData.article as ExtractedArticle;
+        }
+        setParamsExterne({
+          section: "po",
+          theme: theme.trim(),
+          level,
+          targetWordCount,
+          articleCount: level === "C1" ? articleCount : 1,
+          source: sourceArticleData!
+        });
+        return;
+      }
+
       // Étape 3 : Réécriture didactique et boucle de décompte de mots
       setProgressStep(`Génération didactique ${level} avec Gemini Flash & boucle de comptage de mots (±5%)...`);
 
@@ -189,8 +243,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
       const genData = await genRes.json();
       if (!genRes.ok) throw new Error(genData.error || "Erreur lors de la génération du sujet");
 
-      setResult(genData.result);
-      setActiveDocTab(0);
+      afficherResultat(genData.result);
     } catch (err: any) {
       setErrorMsg(err.message || "Erreur inconnue lors de la génération");
     } finally {
@@ -254,9 +307,9 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
   const maxTolerance = Math.round(targetWordCount * 1.05);
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-y-auto p-8 gap-8 max-w-7xl mx-auto w-full">
+    <div className="flex-1 flex flex-col h-full overflow-y-auto p-8 gap-8 max-w-7xl mx-auto w-full print:p-0 print:max-w-none">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-6">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-6 print:hidden">
         <div>
           <div className="flex items-center gap-2 mb-1">
             <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl border border-indigo-100">
@@ -288,7 +341,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
       {/* Main Grid: Form Left, Results Right */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         {/* FORMULAIRE (Col 5) */}
-        <div className="lg:col-span-5 space-y-6">
+        <div className="lg:col-span-5 space-y-6 print:hidden">
           <div className="bg-white border border-slate-200/90 rounded-3xl p-6 shadow-sm space-y-6">
             <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
               <Sliders className="w-4 h-4 text-indigo-600" /> Paramètres du Sujet
@@ -496,6 +549,9 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
               )}
             </div>
 
+            {/* 6. Moteur : Gemini ou IA externe */}
+            <ChoixMoteur moteur={moteur} onChange={setMoteur} />
+
             {/* Boutons d'action */}
             <div className="pt-2">
               {searchMode === "ASSISTED" ? (
@@ -514,10 +570,14 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
                   type="button"
                   onClick={() => handleGenerate()}
                   disabled={isGenerating || isSearching}
-                  className="w-full py-4 px-6 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white rounded-2xl font-black text-sm shadow-lg shadow-indigo-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  className={`w-full py-4 px-6 bg-gradient-to-r ${moteur === "externe" ? "from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 shadow-violet-500/20" : "from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 shadow-indigo-500/20"} text-white rounded-2xl font-black text-sm shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50`}
                 >
-                  {isGenerating ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
-                  <span>{isGenerating ? "Création en cours..." : "Générer le sujet pour l'oral"}</span>
+                  {isGenerating ? <Loader2 className="w-5 h-5 animate-spin" /> : moteur === "externe" ? <Brain className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
+                  <span>
+                    {isGenerating
+                      ? (moteur === "externe" ? "Recherche de l'article..." : "Création en cours...")
+                      : moteur === "externe" ? "Préparer le sujet avec une IA externe" : "Générer le sujet pour l'oral"}
+                  </span>
                 </button>
                 <Aide cle="c_genOralGenerer" taille={18} />
                 </div>
@@ -567,11 +627,13 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
                 <Loader2 className="w-8 h-8 animate-spin" />
               </div>
               <div className="space-y-2">
-                <h3 className="font-black text-lg text-slate-900">Génération du document déclencheur oral en cours</h3>
+                <h3 className="font-black text-lg text-slate-900">
+                  {moteur === "externe" ? "Recherche de l'article source en cours" : "Génération du document déclencheur oral en cours"}
+                </h3>
                 <p className="text-xs text-indigo-600 font-medium animate-pulse">{progressStep || "Traitement avec Gemini Flash..."}</p>
               </div>
 
-              <div className="space-y-2 max-w-sm mx-auto text-left text-xs text-slate-500 pt-4 border-t border-slate-100">
+              <div className={`space-y-2 max-w-sm mx-auto text-left text-xs text-slate-500 pt-4 border-t border-slate-100 ${moteur === "externe" ? "hidden" : ""}`}>
                 <div className="flex items-center gap-2">
                   <CheckCircle className="w-4 h-4 text-emerald-500" />
                   <span>Recherche ciblée sur les {MEDIA_WHITELIST.length} diffuseurs TV/Radio</span>
@@ -677,17 +739,53 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
                   </div>
                 </div>
 
-                {/* Bannière de repli si applicable */}
-                {result.fallbackNotice && (
-                  <span className="px-3 py-1 bg-amber-50 text-amber-900 border border-amber-200 rounded-full text-xs font-bold flex items-center gap-1.5">
-                    <Zap className="w-3 h-3 text-amber-600 fill-amber-500" />
-                    <span>Repli : {result.modelUsed}</span>
-                  </span>
-                )}
+                <div className="flex flex-wrap items-center gap-2 print:hidden">
+                  {/* Bannière de repli si applicable */}
+                  {result.fallbackNotice && (
+                    <span className="px-3 py-1 bg-amber-50 text-amber-900 border border-amber-200 rounded-full text-xs font-bold flex items-center gap-1.5">
+                      <Zap className="w-3 h-3 text-amber-600 fill-amber-500" />
+                      <span>Repli : {result.modelUsed}</span>
+                    </span>
+                  )}
+                  {result.modelUsed === MODELE_IA_EXTERNE && (
+                    <span className="px-3 py-1 bg-violet-50 text-violet-800 border border-violet-200 rounded-full text-xs font-bold flex items-center gap-1.5">
+                      <Brain className="w-3 h-3" /> Préparé par une IA externe
+                    </span>
+                  )}
+                  {editing && resultInitial && result !== resultInitial && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (window.confirm("Abandonner toutes vos modifications et revenir au texte généré ?")) {
+                          setResult(resultInitial);
+                          setActiveDocTab(0);
+                        }
+                      }}
+                      className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Undo2 className="w-3.5 h-3.5" /> Rétablir
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setEditing(e => !e)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer border ${
+                      editing
+                        ? "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600"
+                        : "bg-white hover:bg-indigo-50 text-indigo-700 border-indigo-200"
+                    }`}
+                  >
+                    {editing ? <><Check className="w-3.5 h-3.5" /> Terminer les modifications</> : <><Pencil className="w-3.5 h-3.5" /> Modifier</>}
+                  </button>
+                  <Aide cle="c_genModifier" taille={16} />
+                </div>
               </div>
 
+              {/* Modification du sujet */}
+              {editing && <EditeurSujet result={result} onChange={setResult} />}
+
               {/* Onglets multi-documents si C1 */}
-              {result.documents.length > 1 && (
+              {!editing && result.documents.length > 1 && (
                 <div className="flex items-center gap-2 p-1 bg-slate-100/80 rounded-2xl border border-slate-200/60">
                   {result.documents.map((doc, idx) => (
                     <button
@@ -711,11 +809,11 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
               )}
 
               {/* Affichage du document actif */}
-              {result.documents[activeDocTab] && (
+              {!editing && result.documents[activeDocTab] && (
                 <div className="space-y-5 bg-slate-50/70 rounded-2xl p-6 border border-slate-100">
                   {/* Angle / Thèse si C1 */}
                   {result.documents[activeDocTab].viewpoint && (
-                    <div className="text-[11px] font-bold text-indigo-700 bg-indigo-50/70 px-3 py-1 rounded-lg border border-indigo-100/60 inline-flex items-center gap-1.5">
+                    <div className="text-[11px] font-bold text-indigo-700 bg-indigo-50/70 px-3 py-1 rounded-lg border border-indigo-100/60 inline-flex items-center gap-1.5 print:hidden">
                       <span>Perspective :</span>
                       <span>{result.documents[activeDocTab].viewpoint}</span>
                     </div>
@@ -734,7 +832,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
                           href={result.sourceArticle.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-blue-600 hover:underline inline-flex items-center gap-0.5 ml-1 font-normal not-italic"
+                          className="text-blue-600 hover:underline inline-flex items-center gap-0.5 ml-1 font-normal not-italic print:hidden"
                           title="Consulter l'article original"
                         >
                           <ExternalLink className="w-3 h-3" /> Source d'origine
@@ -749,7 +847,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
                   </div>
 
                   {/* Badge de validation du décompte de mots */}
-                  <div className="pt-4 border-t border-slate-200/60 flex flex-wrap items-center justify-between gap-3 text-xs">
+                  <div className="pt-4 border-t border-slate-200/60 flex flex-wrap items-center justify-between gap-3 text-xs print:hidden">
                     <div className="flex items-center gap-2">
                       <div
                         className={`px-3 py-1.5 rounded-xl font-bold flex items-center gap-1.5 ${
@@ -790,7 +888,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
               )}
 
               {/* Barre d'actions */}
-              <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-2 print:hidden">
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
@@ -820,6 +918,16 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
                   >
                     <Download className="w-3.5 h-3.5" />
                     <span>Télécharger (.md)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handlePrint}
+                    className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                    title="Imprimer le document affiché"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    <span>Imprimer</span>
                   </button>
                 </div>
 
@@ -858,6 +966,20 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
           )}
         </div>
       </div>
+
+      {/* Préparation par une IA externe : consignes à exporter, réponse à recoller */}
+      <AnimatePresence>
+        {paramsExterne && (
+          <GenerateurExterneModal
+            params={paramsExterne}
+            onApply={r => {
+              afficherResultat(r);
+              setParamsExterne(null);
+            }}
+            onClose={() => setParamsExterne(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

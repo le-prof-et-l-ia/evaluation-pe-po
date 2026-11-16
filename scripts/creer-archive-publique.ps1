@@ -12,8 +12,10 @@ $zipName  = 'Evaluation-PE-et-PO-Public.zip'
 $dest     = Join-Path $root $zipName
 $tempDir  = Join-Path $env:TEMP ('eval_pkg_' + [System.Guid]::NewGuid().ToString('N'))
 
-$excludeDirs  = @('node_modules', '.next', '.git', '.agents', 'dist', 'out')
-$excludeFiles = @('.env.local', $zipName, 'journal_installation.txt', 'journal_compilation.txt', 'lancement_en_cours.lock')
+# .claude et _travail : reglages et notes de travail du mainteneur, non diffuses.
+$excludeDirs  = @('node_modules', '.next', '.git', '.agents', '.claude', '_travail', 'dist', 'out')
+# .git peut aussi etre un fichier (copie de travail git secondaire) : il contient un chemin local.
+$excludeFiles = @('.git', '.env.local', $zipName, 'journal_installation.txt', 'journal_compilation.txt', 'lancement_en_cours.lock', 'tsconfig.tsbuildinfo')
 $unixExecExtensions = @('.command', '.sh')
 
 # ---------------------------------------------------------------------

@@ -56,6 +56,8 @@ export interface GeneratedDocument {
   toleranceMet: boolean;
   iterationCount: number;
   viewpoint?: string;
+  /** Article source repris tel quel (CE « article original ») : pas de longueur visée. */
+  texteOriginal?: boolean;
 }
 
 export type QuestionType = 'qcm' | 'vrai_faux' | 'reponse_ouverte';
@@ -455,10 +457,60 @@ export async function extractArticleContent(url: string, defaultMediaName?: stri
   };
 }
 
+/** Exemple du JSON attendu pour le ou les textes déclencheurs. */
+export const EXEMPLE_JSON_ARTICLES = {
+  articles: [
+    {
+      documentNumber: 1,
+      title: 'Titre typographié français',
+      source: "D'après Nom du média, Date",
+      body: 'Corps du texte en 2 à 4 paragraphes séparés par deux retours à la ligne...',
+      viewpoint: 'Bref résumé de la thèse / perspective défendue'
+    }
+  ]
+};
+
+/** Exemple du JSON attendu pour le questionnaire de compréhension écrite. */
+export const EXEMPLE_JSON_CE = {
+  generalInstructions: "Lisez attentivement l'article ci-dessus, puis répondez aux questions suivantes en cochant la bonne réponse ou en rédigeant la réponse demandée.",
+  questions: [
+    {
+      id: 1,
+      type: 'qcm',
+      cognitiveDomain: 'globale',
+      points: 3,
+      question: "Quel est l'objectif principal de cet article ?",
+      options: ['A. Première option...', 'B. Deuxième option...', 'C. Troisième option...'],
+      correctAnswerIndex: 1,
+      gradingCriteria: '1 point pour la bonne réponse cochée.'
+    },
+    {
+      id: 2,
+      type: 'vrai_faux',
+      cognitiveDomain: 'detaillee',
+      points: 4,
+      question: "Selon l'auteur, la mesure a été accueillie favorablement par l'ensemble des acteurs.",
+      trueFalseAnswer: false,
+      justificationText: "« Citation exacte et intégrale extraite de l'article »",
+      gradingCriteria: "La totalité des points n'est accordée que si la case Faux est cochée ET que la citation textuelle exacte est fournie."
+    },
+    {
+      id: 3,
+      type: 'reponse_ouverte',
+      cognitiveDomain: 'implicite',
+      points: 5,
+      question: "Expliquez pourquoi l'auteur qualifie cette évolution de « paradoxale ».",
+      sampleAnswer: 'Réponse modèle complète rédigée...',
+      gradingCriteria: 'Attribuer la totalité des points si les deux éléments suivants sont explicités...'
+    }
+  ]
+};
+
 /**
- * Construit le prompt système pour la génération de texte déclencheur FLE.
+ * Consignes de rédaction du texte déclencheur FLE (sans le format de réponse),
+ * communes à la génération par Gemini et à la préparation par une IA externe.
  */
-function buildDidacticSystemPrompt(
+export function buildDidacticDirectives(
   level: 'B1' | 'B2' | 'C1',
   targetWordCount: number,
   articleCount: number,
@@ -504,20 +556,85 @@ Calibrage syntaxique et lexical selon le niveau :
 ${levelCalibration}
 
 Contrainte volumétrique :
-${volumeInstruction}
+${volumeInstruction}`;
+}
+
+/**
+ * Construit le prompt système pour la génération de texte déclencheur FLE.
+ */
+function buildDidacticSystemPrompt(
+  level: 'B1' | 'B2' | 'C1',
+  targetWordCount: number,
+  articleCount: number,
+  minWordCount?: number,
+  maxWordCount?: number
+): string {
+  return `${buildDidacticDirectives(level, targetWordCount, articleCount, minWordCount, maxWordCount)}
 
 Format de réponse obligatoire en JSON pur et valide :
-{
-  "articles": [
-    {
-      "documentNumber": 1,
-      "title": "Titre typographié français",
-      "source": "D'après Nom du média, Date",
-      "body": "Corps du texte en 2 à 4 paragraphes séparés par deux retours à la ligne...",
-      "viewpoint": "Bref résumé de la thèse / perspective défendue"
-    }
-  ]
-}`;
+${JSON.stringify(EXEMPLE_JSON_ARTICLES, null, 2)}`;
+}
+
+/** Bornes de longueur acceptées (intervalle personnalisé, sinon ±5 % autour de la cible). */
+export function bornesLongueur(targetWordCount: number, minWordCount?: number, maxWordCount?: number): { min: number; max: number } {
+  return {
+    min: minWordCount ?? Math.round(targetWordCount * 0.95),
+    max: maxWordCount ?? Math.round(targetWordCount * 1.05)
+  };
+}
+
+/**
+ * Normalise les articles renvoyés par une IA (titre, source et décompte de mots),
+ * sans boucle d'ajustement : utilisé pour la réponse d'une IA externe.
+ */
+export function normaliserArticles(
+  rawArticles: any[],
+  source: { mediaName: string; publishedDate: string },
+  targetWordCount: number,
+  minWordCount?: number,
+  maxWordCount?: number
+): GeneratedDocument[] {
+  const { min, max } = bornesLongueur(targetWordCount, minWordCount, maxWordCount);
+  return rawArticles
+    .filter(a => a && typeof a.body === 'string' && a.body.trim())
+    .map((a, i) => {
+      const body = String(a.body).trim();
+      const actualWordCount = countFrenchWords(body);
+      return {
+        documentNumber: i + 1,
+        title: (typeof a.title === 'string' && a.title.trim()) || `Article déclencheur ${i + 1}`,
+        source: (typeof a.source === 'string' && a.source.trim()) || `D'après ${source.mediaName}, ${source.publishedDate}`,
+        body,
+        actualWordCount,
+        targetWordCount,
+        toleranceMet: actualWordCount >= min && actualWordCount <= max,
+        iterationCount: 0,
+        viewpoint: typeof a.viewpoint === 'string' ? a.viewpoint : ''
+      };
+    });
+}
+
+/** Document « article original » (CE) : le texte source repris tel quel. */
+export function documentOriginal(article: ExtractedArticle, theme: string): GeneratedDocument {
+  const wordCount = countFrenchWords(article.cleanText);
+  return {
+    documentNumber: 1,
+    title: article.title || `Article : ${theme}`,
+    source: `D'après ${article.mediaName}, ${article.publishedDate}`,
+    body: article.cleanText,
+    actualWordCount: wordCount,
+    targetWordCount: wordCount,
+    toleranceMet: true,
+    iterationCount: 0,
+    viewpoint: "Texte original d'actualité (source)",
+    texteOriginal: true
+  };
+}
+
+/** Texte support du questionnaire CE : le texte seul, ou les textes titrés s'il y en a plusieurs. */
+export function texteSupportCe(documents: GeneratedDocument[]): string {
+  if (documents.length === 1) return documents[0].body;
+  return documents.map(d => `${d.title}\n\n${d.body}`).join('\n\n---\n\n');
 }
 
 /**
@@ -702,34 +819,7 @@ export async function generateReadingComprehensionExam(params: {
     apiKeys
   } = params;
 
-  const questionCount = Math.min(Math.max(params.questionCount || 6, 3), 15);
-  const totalPoints = Math.max(params.totalPoints || 25, 5);
-  const allowedTypes: QuestionType[] = (params.questionTypes && params.questionTypes.length > 0)
-    ? params.questionTypes
-    : ['qcm', 'vrai_faux', 'reponse_ouverte'];
-
-  let levelGuidelines = '';
-  if (level === 'B1') {
-    levelGuidelines = `- DELF B1 :
-  * Questions directes portant sur des faits concrets, des avis exprimés ou des informations explicites.
-  * Vocabulaire courant et formulation simple et transparente des questions.
-  * Distracteurs plausibles mais sans piège linguistique excessif.`;
-  } else if (level === 'B2') {
-    levelGuidelines = `- DELF B2 :
-  * Questions portant sur l'argumentation, la confrontation des idées, les nuances et les intentions de l'auteur.
-  * Présence de questions sollicitant la compréhension fine de l'implicite ou du ton du texte.
-  * Distracteurs subtils requérant une lecture attentive de tout le passage.`;
-  } else {
-    levelGuidelines = `- DALF C1 :
-  * Questions analytiques portant sur la posture énonciative, l'ironie, les sous-entendus et les procédés rhétoriques.
-  * Formulation soutenue, questions ouvertes demandant une réelle capacité de synthèse et de reformulation critique.`;
-  }
-
-  const typesListFormatted = allowedTypes.map(t => {
-    if (t === 'qcm') return '- "qcm" : Question à choix multiples avec 3 options (A, B, C) et 1 seule bonne réponse indiscutable.';
-    if (t === 'vrai_faux') return '- "vrai_faux" : Affirmation avec choix Vrai/Faux et OBLIGATION de citer le passage exact du texte justifiant la réponse.';
-    return '- "reponse_ouverte" : Question ouverte demandant une réponse rédigée précise (1 à 3 phrases).';
-  }).join('\n');
+  const { questionCount, totalPoints, allowedTypes } = parametresCe(params);
 
   const systemPrompt = `Rôle : Concepteur d'épreuves officielles de certification en Français Langue Étrangère (DELF / DALF, France Éducation international).
 Mission : Concevoir une épreuve complète de Compréhension Écrite (CE) de niveau CECRL ${level}, comportant exactement ${questionCount} questions pour un total de ${totalPoints} points, accompagnée de son corrigé officiel détaillé et de son barème.
@@ -742,64 +832,10 @@ Texte :
 ${articleText.slice(0, MAX_SOURCE_CHARS)}
 """
 
-Directives didactiques CECRL (${level}) :
-${levelGuidelines}
-
-Types de questions à intégrer impérativement parmi la sélection de l'utilisateur :
-${typesListFormatted}
-(Si plusieurs types sont autorisés, variez impérativement les types au sein du questionnaire de manière équilibrée).
-
-Équilibrage cognitif obligatoire :
-Répartissez judicieusement les questions selon les 4 dimensions fondamentales de la compréhension écrite :
-1. "globale" : identifier le thème, la visée informative ou polémique, la thèse principale.
-2. "detaillee" : repérer des informations factuelles précises, des explications, des relations de cause à effet.
-3. "implicite" : déduire le point de vue de l'auteur, les sous-entendus, l'attitude ou le ton (ironique, alarmiste, nuancé).
-4. "lexique" : comprendre le sens d'un terme ou d'une expression en contexte.
-
-Barème et attribution des points :
-- Le total des points distribués sur l'ensemble des ${questionCount} questions doit faire TRÈS EXACTEMENT ${totalPoints} points.
-- Pour chaque question, attribuez des points cohérents (ex: 2 à 5 points selon la complexité). Les questions Vrai/Faux avec justification et les questions ouvertes valent généralement plus de points qu'un QCM simple.
-- Pour chaque question, détaillez le barème officiel d'attribution (ex: pour Vrai/Faux, la règle stricte DELF est que la justification exacte est indispensable pour avoir les points).
+${buildCeDirectives(level, questionCount, totalPoints, allowedTypes)}
 
 Format de réponse OBLIGATOIRE en JSON pur et valide (aucun préambule ni balisage markdown) :
-{
-  "generalInstructions": "Lisez attentivement l'article ci-dessus, puis répondez aux questions suivantes en cochant la bonne réponse ou en rédigeant la réponse demandée.",
-  "questions": [
-    {
-      "id": 1,
-      "type": "qcm",
-      "cognitiveDomain": "globale",
-      "points": 3,
-      "question": "Quel est l'objectif principal de cet article ?",
-      "options": [
-        "A. Première option...",
-        "B. Deuxième option...",
-        "C. Troisième option..."
-      ],
-      "correctAnswerIndex": 1,
-      "gradingCriteria": "1 point pour la bonne réponse cochée."
-    },
-    {
-      "id": 2,
-      "type": "vrai_faux",
-      "cognitiveDomain": "detaillee",
-      "points": 4,
-      "question": "Selon l'auteur, la mesure a été accueillie favorablement par l'ensemble des acteurs.",
-      "trueFalseAnswer": false,
-      "justificationText": "« Citation exacte et intégrale extraite de l'article »",
-      "gradingCriteria": "La totalité des points n'est accordée que si la case Faux est cochée ET que la citation textuelle exacte est fournie."
-    },
-    {
-      "id": 3,
-      "type": "reponse_ouverte",
-      "cognitiveDomain": "implicite",
-      "points": 5,
-      "question": "Expliquez pourquoi l'auteur qualifie cette évolution de « paradoxale ».",
-      "sampleAnswer": "Réponse modèle complète rédigée...",
-      "gradingCriteria": "Attribuer la totalité des points si les deux éléments suivants sont explicités..."
-    }
-  ]
-}`;
+${JSON.stringify(EXEMPLE_JSON_CE, null, 2)}`;
 
   const userPrompt = `Générez l'épreuve de Compréhension Écrite (${level}) avec ${questionCount} questions pour un total de ${totalPoints} points sur le thème « ${theme} », en respectant scrupuleusement la structure JSON demandée.`;
 
@@ -833,6 +869,86 @@ Format de réponse OBLIGATOIRE en JSON pur et valide (aucun préambule ni balisa
     throw new Error("L'IA n'a pas renvoyé un format JSON valide pour l'épreuve de Compréhension Écrite. Veuillez réessayer.");
   }
 
+  return normaliserExamenCe(parsed, { articleTitle, articleSource, articleText, totalPoints, allowedTypes });
+}
+
+/** Bornes et valeurs par défaut des réglages du questionnaire CE. */
+export function parametresCe(params: { questionCount?: number; totalPoints?: number; questionTypes?: QuestionType[] }): {
+  questionCount: number;
+  totalPoints: number;
+  allowedTypes: QuestionType[];
+} {
+  return {
+    questionCount: Math.min(Math.max(Number(params.questionCount) || 6, 3), 15),
+    totalPoints: Math.max(Number(params.totalPoints) || 25, 5),
+    allowedTypes: (params.questionTypes && params.questionTypes.length > 0)
+      ? params.questionTypes
+      : ['qcm', 'vrai_faux', 'reponse_ouverte']
+  };
+}
+
+/**
+ * Consignes de conception du questionnaire CE (sans le texte support ni le format de réponse),
+ * communes à la génération par Gemini et à la préparation par une IA externe.
+ */
+export function buildCeDirectives(
+  level: 'B1' | 'B2' | 'C1',
+  questionCount: number,
+  totalPoints: number,
+  allowedTypes: QuestionType[]
+): string {
+  let levelGuidelines = '';
+  if (level === 'B1') {
+    levelGuidelines = `- DELF B1 :
+  * Questions directes portant sur des faits concrets, des avis exprimés ou des informations explicites.
+  * Vocabulaire courant et formulation simple et transparente des questions.
+  * Distracteurs plausibles mais sans piège linguistique excessif.`;
+  } else if (level === 'B2') {
+    levelGuidelines = `- DELF B2 :
+  * Questions portant sur l'argumentation, la confrontation des idées, les nuances et les intentions de l'auteur.
+  * Présence de questions sollicitant la compréhension fine de l'implicite ou du ton du texte.
+  * Distracteurs subtils requérant une lecture attentive de tout le passage.`;
+  } else {
+    levelGuidelines = `- DALF C1 :
+  * Questions analytiques portant sur la posture énonciative, l'ironie, les sous-entendus et les procédés rhétoriques.
+  * Formulation soutenue, questions ouvertes demandant une réelle capacité de synthèse et de reformulation critique.`;
+  }
+
+  const typesListFormatted = allowedTypes.map(t => {
+    if (t === 'qcm') return '- "qcm" : Question à choix multiples avec 3 options (A, B, C) et 1 seule bonne réponse indiscutable.';
+    if (t === 'vrai_faux') return '- "vrai_faux" : Affirmation avec choix Vrai/Faux et OBLIGATION de citer le passage exact du texte justifiant la réponse.';
+    return '- "reponse_ouverte" : Question ouverte demandant une réponse rédigée précise (1 à 3 phrases).';
+  }).join('\n');
+
+  return `Directives didactiques CECRL (${level}) :
+${levelGuidelines}
+
+Types de questions à intégrer impérativement parmi la sélection de l'utilisateur :
+${typesListFormatted}
+(Si plusieurs types sont autorisés, variez impérativement les types au sein du questionnaire de manière équilibrée).
+
+Équilibrage cognitif obligatoire :
+Répartissez judicieusement les questions selon les 4 dimensions fondamentales de la compréhension écrite :
+1. "globale" : identifier le thème, la visée informative ou polémique, la thèse principale.
+2. "detaillee" : repérer des informations factuelles précises, des explications, des relations de cause à effet.
+3. "implicite" : déduire le point de vue de l'auteur, les sous-entendus, l'attitude ou le ton (ironique, alarmiste, nuancé).
+4. "lexique" : comprendre le sens d'un terme ou d'une expression en contexte.
+
+Barème et attribution des points :
+- Le total des points distribués sur l'ensemble des ${questionCount} questions doit faire TRÈS EXACTEMENT ${totalPoints} points.
+- Pour chaque question, attribuez des points cohérents (ex: 2 à 5 points selon la complexité). Les questions Vrai/Faux avec justification et les questions ouvertes valent généralement plus de points qu'un QCM simple.
+- Pour chaque question, détaillez le barème officiel d'attribution (ex: pour Vrai/Faux, la règle stricte DELF est que la justification exacte est indispensable pour avoir les points).`;
+}
+
+/**
+ * Normalise le questionnaire CE renvoyé par une IA (Gemini ou IA externe) :
+ * types autorisés, champs propres à chaque type, total de points exact.
+ */
+export function normaliserExamenCe(
+  parsed: any,
+  ctx: { articleTitle: string; articleSource: string; articleText: string; totalPoints: number; allowedTypes: QuestionType[] }
+): CeExam {
+  const { articleTitle, articleSource, articleText, totalPoints, allowedTypes } = ctx;
   const rawQuestions: any[] = Array.isArray(parsed?.questions) ? parsed.questions : [];
   if (rawQuestions.length === 0) {
     throw new Error("Aucune question n'a été générée pour l'épreuve de Compréhension Écrite.");
@@ -841,7 +957,13 @@ Format de réponse OBLIGATOIRE en JSON pur et valide (aucun préambule ni balisa
   // Normalisation programmatique des questions et du total de points
   const validatedQuestions: CeQuestion[] = rawQuestions.map((q, idx) => {
     const qType: QuestionType = allowedTypes.includes(q.type) ? q.type : allowedTypes[0];
-    const pts = typeof q.points === 'number' && q.points > 0 ? q.points : 2;
+    // Une IA externe renvoie parfois des nombres sous forme de texte (« 3 », « 1,5 »).
+    const ptsLu = Number(String(q.points ?? '').replace(',', '.'));
+    const pts = Number.isFinite(ptsLu) && ptsLu > 0 ? ptsLu : 2;
+    const indexLu = Number(q.correctAnswerIndex);
+    const vraiFauxLu = typeof q.trueFalseAnswer === 'boolean'
+      ? q.trueFalseAnswer
+      : /^(vrai|true|v)$/i.test(String(q.trueFalseAnswer ?? '').trim());
 
     const baseQ: CeQuestion = {
       id: idx + 1,
@@ -854,9 +976,9 @@ Format de réponse OBLIGATOIRE en JSON pur et valide (aucun préambule ni balisa
 
     if (qType === 'qcm') {
       baseQ.options = Array.isArray(q.options) && q.options.length >= 2 ? q.options : ['Option A', 'Option B', 'Option C'];
-      baseQ.correctAnswerIndex = typeof q.correctAnswerIndex === 'number' ? q.correctAnswerIndex : 0;
+      baseQ.correctAnswerIndex = Number.isInteger(indexLu) && indexLu >= 0 && indexLu < baseQ.options!.length ? indexLu : 0;
     } else if (qType === 'vrai_faux') {
-      baseQ.trueFalseAnswer = typeof q.trueFalseAnswer === 'boolean' ? q.trueFalseAnswer : false;
+      baseQ.trueFalseAnswer = vraiFauxLu;
       baseQ.justificationText = q.justificationText || '';
     } else if (qType === 'reponse_ouverte') {
       baseQ.sampleAnswer = q.sampleAnswer || '';
@@ -879,7 +1001,8 @@ Format de réponse OBLIGATOIRE en JSON pur et valide (aucun préambule ni balisa
     articleTitle,
     articleSource,
     articleText,
-    totalPoints,
+    // Total réellement distribué (identique au total demandé, sauf ajustement impossible).
+    totalPoints: Number(validatedQuestions.reduce((sum, q) => sum + q.points, 0).toFixed(1)),
     questionCount: validatedQuestions.length,
     questions: validatedQuestions,
     generalInstructions: parsed?.generalInstructions || "Lisez attentivement l'article puis répondez aux questions ci-dessous."

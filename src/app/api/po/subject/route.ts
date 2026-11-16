@@ -46,9 +46,23 @@ export async function POST(req: Request) {
       });
     }
 
+    // 2 bis. Recherche et extraction automatiques d'un article (1-clic), sans appel à l'IA :
+    // sert à la préparation par une IA externe, qui reçoit ensuite le texte de l'article.
+    if (action === 'find') {
+      const { theme } = body;
+      if (!theme || typeof theme !== 'string' || !theme.trim()) {
+        return NextResponse.json({ error: 'Le thème est obligatoire pour la recherche.' }, { status: 400 });
+      }
+      const article = await findArticleForTheme(theme.trim());
+      if (!article) {
+        return NextResponse.json({ error: NO_ARTICLE_FOUND_MESSAGE }, { status: 422 });
+      }
+      return NextResponse.json({ success: true, article });
+    }
+
     // 3. Génération du texte déclencheur
     if (action === 'generate') {
-      const { theme, level = 'B2', targetWordCount = 250, sourceArticle, apiKeys } = body;
+      const { theme, level = 'B2', targetWordCount = 250, articleCount = 1, sourceArticle, apiKeys } = body;
 
       if (!theme || typeof theme !== 'string' || !theme.trim()) {
         return NextResponse.json({ error: 'Le thème est obligatoire.' }, { status: 400 });
@@ -67,9 +81,10 @@ export async function POST(req: Request) {
 
       const result = await generateTriggerSubject({
         theme: theme.trim(),
-        level: (level === 'B1' ? 'B1' : 'B2') as 'B1' | 'B2',
+        // Le niveau C1 et son dossier de 1 à 3 documents, proposés à l'écran, sont respectés.
+        level: (level === 'B1' || level === 'C1' ? level : 'B2') as 'B1' | 'B2' | 'C1',
         targetWordCount: Number(targetWordCount) || 250,
-        articleCount: 1,
+        articleCount: level === 'C1' ? Number(articleCount) || 1 : 1,
         sourceArticle: articleToUse,
         apiKeys
       });

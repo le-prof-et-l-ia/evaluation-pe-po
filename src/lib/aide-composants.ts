@@ -295,6 +295,30 @@ export const AIDE_COMPOSANTS = {
       "Les questions et le corrigé ne sont pas repris.",
     ],
   },
+  c_genMoteur: {
+    titre: "Gemini ou IA externe ?",
+    texte: [
+      "• Gemini (clé API) : l'application rédige le sujet elle-même, avec votre clé Gemini, et ajuste automatiquement la longueur des textes.",
+      "• IA externe (abonnement) : l'application cherche et extrait l'article source comme d'habitude, puis prépare un texte de consignes que vous donnez vous-même à l'IA de votre choix (Claude, ChatGPT, Gemini…), dans le cadre de votre abonnement. Vous recollez ensuite sa réponse. Rien n'est envoyé automatiquement.",
+      "Les consignes données à l'IA externe sont les mêmes que celles données à Gemini. L'application recompte les mots des textes reçus et signale tout écart ; vous pouvez ensuite les modifier.",
+    ],
+  },
+  c_genExterne: {
+    titre: "Préparer un sujet avec une IA externe",
+    texte: [
+      "1. Copiez les consignes (ou téléchargez le fichier .md) et donnez-les à l'IA dans une nouvelle discussion. Elles contiennent déjà le texte de l'article source.",
+      "2. Copiez la réponse de l'IA (un objet JSON), collez-la dans le cadre de l'étape 2, puis cliquez sur « Afficher le sujet ».",
+      "Le sujet s'affiche comme s'il avait été généré par l'application : vous pouvez le modifier, le copier, le télécharger, l'imprimer ou l'utiliser comme sujet de correction.",
+    ],
+  },
+  c_genModifier: {
+    titre: "Modifier le sujet",
+    texte: [
+      "Ouvre le sujet en modification : titres, sources, textes, consignes, questions, options, réponses attendues, citations, barème et points.",
+      "Le nombre de mots et le total des points sont recalculés à chaque modification. Les questions peuvent être déplacées, supprimées ou ajoutées.",
+      "Les boutons Copier, Télécharger, Imprimer et « Utiliser comme sujet » reprennent toujours la version modifiée. « Rétablir » revient au texte tel qu'il a été généré.",
+    ],
+  },
   c_genOralGenerer: {
     titre: "Générer le sujet pour l'oral",
     texte: [

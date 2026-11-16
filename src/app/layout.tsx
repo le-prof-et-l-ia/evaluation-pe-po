@@ -9,7 +9,7 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: "Le Prof et l'IA",
-  description: "Application officielle d'examen et correction DELF pour Google AI",
+  description: "Aide à l'évaluation des productions écrites et orales (DELF B1, B2) avec l'IA",
 };
 
 export default function RootLayout({

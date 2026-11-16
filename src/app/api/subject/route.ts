@@ -8,7 +8,8 @@ import {
   generateTriggerSubject,
   generateReadingComprehensionExam,
   MEDIA_WHITELIST,
-  countFrenchWords,
+  documentOriginal,
+  texteSupportCe,
   SubjectGenerationResult
 } from '@/lib/subjectGeneratorService';
 
@@ -49,6 +50,20 @@ export async function POST(req: Request) {
       });
     }
 
+    // 2 bis. RECHERCHE ET EXTRACTION AUTOMATIQUES D'UN ARTICLE (1-clic), sans appel à l'IA :
+    // sert à la préparation par une IA externe, qui reçoit ensuite le texte de l'article.
+    if (action === 'find') {
+      const { theme } = body;
+      if (!theme || typeof theme !== 'string' || !theme.trim()) {
+        return NextResponse.json({ error: 'Le thème est obligatoire pour la recherche.' }, { status: 400 });
+      }
+      const article = await findArticleForTheme(theme.trim());
+      if (!article) {
+        return NextResponse.json({ error: NO_ARTICLE_FOUND_MESSAGE }, { status: 422 });
+      }
+      return NextResponse.json({ success: true, article });
+    }
+
     // 3. GÉNÉRATION DIDACTIQUE & CONTRÔLE VOLUMÉTRIQUE (1-clic ou assisté, PE et CE)
     if (action === 'generate') {
       const {
@@ -86,20 +101,8 @@ export async function POST(req: Request) {
 
       // CAS A : Création de Compréhension Écrite (CE) avec article ORIGINAL
       if (generateCe && ceArticleMode === 'original') {
-        const cleanBody = articleToUse.cleanText;
-        const wordCount = countFrenchWords(cleanBody);
-
-        const originalDoc = {
-          documentNumber: 1,
-          title: articleToUse.title || `Article : ${theme.trim()}`,
-          source: `D'après ${articleToUse.mediaName}, ${articleToUse.publishedDate}`,
-          body: cleanBody,
-          actualWordCount: wordCount,
-          targetWordCount: wordCount,
-          toleranceMet: true,
-          iterationCount: 0,
-          viewpoint: "Texte original d'actualité (source)"
-        };
+        const originalDoc = documentOriginal(articleToUse, theme.trim());
+        const wordCount = originalDoc.actualWordCount;
 
         const ceExam = await generateReadingComprehensionExam({
           level: level as 'B1' | 'B2' | 'C1',
@@ -153,7 +156,7 @@ export async function POST(req: Request) {
       // Si l'option CE est sélectionnée avec article adapté, on génère le questionnaire sur le texte adapté
       if (generateCe) {
         const primaryDoc = baseResult.documents[0];
-        const combinedText = baseResult.documents.map(d => `${d.title}\n\n${d.body}`).join('\n\n---\n\n');
+        const combinedText = texteSupportCe(baseResult.documents);
 
         const ceExam = await generateReadingComprehensionExam({
           level: level as 'B1' | 'B2' | 'C1',

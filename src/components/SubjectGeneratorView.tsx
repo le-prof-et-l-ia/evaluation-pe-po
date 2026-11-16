@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { flushSync } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Sparkles,
@@ -26,8 +27,15 @@ import {
   CheckSquare,
   HelpCircle,
   Award,
-  Check
+  Check,
+  Brain,
+  Pencil,
+  Undo2
 } from "lucide-react";
+import GenerateurExterneModal from "@/components/generateurs/GenerateurExterneModal";
+import EditeurSujet from "@/components/generateurs/EditeurSujet";
+import ChoixMoteur, { useMoteurGenerateur } from "@/components/generateurs/ChoixMoteur";
+import { MODELE_IA_EXTERNE, type ParamsGenerationExterne } from "@/lib/generateurs/externe";
 import {
   CandidateArticle,
   ExtractedArticle,
@@ -107,6 +115,27 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
   const [ceViewTab, setCeViewTab] = useState<"student" | "teacher" | "full">("student");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [copySuccess, setCopySuccess] = useState<string | null>(null);
+
+  // Moteur (Gemini ou IA externe) et modification du sujet avant export
+  const [moteur, setMoteur] = useMoteurGenerateur();
+  const [paramsExterne, setParamsExterne] = useState<ParamsGenerationExterne | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [resultInitial, setResultInitial] = useState<SubjectGenerationResult | null>(null);
+
+  /** Affiche un sujet tout juste généré (ou importé d'une IA externe). */
+  const afficherResultat = (r: SubjectGenerationResult) => {
+    setResult(r);
+    setResultInitial(r);
+    setEditing(false);
+    setActiveDocTab(0);
+    setCeViewTab("student");
+  };
+
+  /** Imprime toujours la mise en page normale, même depuis l'écran de modification. */
+  const handlePrint = () => {
+    flushSync(() => setEditing(false));
+    window.print();
+  };
 
   // ── Handlers ───────────────────────────────────────────────────────────────
 
@@ -217,6 +246,38 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
       }
 
       const effectiveTargetCount = useCustomRange ? Math.round((minWords + maxWords) / 2) : targetWordCount;
+      // Dossier de plusieurs articles : C1 en production écrite seulement (sélecteur masqué en CE).
+      const effectiveArticleCount = level === "C1" && !generateCe ? articleCount : 1;
+
+      // Préparation par une IA externe : l'application fournit l'article source,
+      // l'IA de l'abonnement de l'enseignant rédige le sujet.
+      if (moteur === "externe") {
+        if (!sourceArticleData) {
+          setProgressStep(`Recherche et extraction d'un article récent parmi les ${MEDIA_WHITELIST.length} diffuseurs...`);
+          const findRes = await fetch("/api/subject", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "find", theme: theme.trim() })
+          });
+          const findData = await findRes.json();
+          if (!findRes.ok || !findData.article) throw new Error(findData.error || "Aucun article exploitable n'a été trouvé.");
+          sourceArticleData = findData.article as ExtractedArticle;
+        }
+        setParamsExterne({
+          section: "pe",
+          theme: theme.trim(),
+          level,
+          targetWordCount: effectiveTargetCount,
+          minWordCount: useCustomRange ? minWords : undefined,
+          maxWordCount: useCustomRange ? maxWords : undefined,
+          articleCount: effectiveArticleCount,
+          source: sourceArticleData,
+          ce: generateCe
+            ? { articleMode: ceArticleMode, questionCount: ceQuestionCount, totalPoints: ceTotalPoints, questionTypes: ceQuestionTypes }
+            : undefined
+        });
+        return;
+      }
 
       setProgressStep(
         generateCe
@@ -234,7 +295,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
           targetWordCount: effectiveTargetCount,
           minWordCount: useCustomRange ? minWords : undefined,
           maxWordCount: useCustomRange ? maxWords : undefined,
-          articleCount: level === "C1" ? articleCount : 1,
+          articleCount: effectiveArticleCount,
           sourceArticle: sourceArticleData,
           apiKeys,
           generateCe,
@@ -248,9 +309,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Échec de la génération");
 
-      setResult(data.result);
-      setActiveDocTab(0);
-      setCeViewTab("student");
+      afficherResultat(data.result);
     } catch (err: any) {
       setErrorMsg(err.message || "Erreur lors de la génération du sujet");
     } finally {
@@ -865,6 +924,9 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
               </AnimatePresence>
             </div>
 
+            {/* 7. Moteur : Gemini ou IA externe */}
+            <ChoixMoteur moteur={moteur} onChange={setMoteur} />
+
             {/* Boutons d'action */}
             <div className="pt-2">
               {searchMode === "ASSISTED" ? (
@@ -882,10 +944,16 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
                   type="button"
                   onClick={() => handleGenerate()}
                   disabled={isGenerating || isSearching}
-                  className="w-full py-4 px-6 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white rounded-2xl font-black text-sm shadow-lg shadow-indigo-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  className={`w-full py-4 px-6 bg-gradient-to-r ${moteur === "externe" ? "from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 shadow-violet-500/20" : "from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 shadow-indigo-500/20"} text-white rounded-2xl font-black text-sm shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50`}
                 >
-                  {isGenerating ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
-                  <span>{isGenerating ? "Création en cours..." : generateCe ? "Générer l'épreuve CE (Article + Questions + Corrigé)" : "Générer le sujet PE"}</span>
+                  {isGenerating ? <Loader2 className="w-5 h-5 animate-spin" /> : moteur === "externe" ? <Brain className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
+                  <span>
+                    {isGenerating
+                      ? (moteur === "externe" ? "Recherche de l'article..." : "Création en cours...")
+                      : moteur === "externe"
+                        ? (generateCe ? "Préparer l'épreuve CE avec une IA externe" : "Préparer le sujet PE avec une IA externe")
+                        : generateCe ? "Générer l'épreuve CE (Article + Questions + Corrigé)" : "Générer le sujet PE"}
+                  </span>
                 </button>
               )}
             </div>
@@ -1010,17 +1078,53 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
                   </div>
                 </div>
 
-                {/* Bannière de repli si applicable */}
-                {result.fallbackNotice && (
-                  <span className="px-3 py-1 bg-amber-50 text-amber-900 border border-amber-200 rounded-full text-xs font-bold flex items-center gap-1.5 print:hidden">
-                    <Zap className="w-3 h-3 text-amber-600 fill-amber-500" />
-                    <span>Repli : {result.modelUsed}</span>
-                  </span>
-                )}
+                <div className="flex flex-wrap items-center gap-2 print:hidden">
+                  {/* Bannière de repli si applicable */}
+                  {result.fallbackNotice && (
+                    <span className="px-3 py-1 bg-amber-50 text-amber-900 border border-amber-200 rounded-full text-xs font-bold flex items-center gap-1.5">
+                      <Zap className="w-3 h-3 text-amber-600 fill-amber-500" />
+                      <span>Repli : {result.modelUsed}</span>
+                    </span>
+                  )}
+                  {result.modelUsed === MODELE_IA_EXTERNE && (
+                    <span className="px-3 py-1 bg-violet-50 text-violet-800 border border-violet-200 rounded-full text-xs font-bold flex items-center gap-1.5">
+                      <Brain className="w-3 h-3" /> Préparé par une IA externe
+                    </span>
+                  )}
+                  {editing && resultInitial && result !== resultInitial && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (window.confirm("Abandonner toutes vos modifications et revenir au texte généré ?")) {
+                          setResult(resultInitial);
+                          setActiveDocTab(0);
+                        }
+                      }}
+                      className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Undo2 className="w-3.5 h-3.5" /> Rétablir
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setEditing(e => !e)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer border ${
+                      editing
+                        ? "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600"
+                        : "bg-white hover:bg-indigo-50 text-indigo-700 border-indigo-200"
+                    }`}
+                  >
+                    {editing ? <><Check className="w-3.5 h-3.5" /> Terminer les modifications</> : <><Pencil className="w-3.5 h-3.5" /> Modifier</>}
+                  </button>
+                  <Aide cle="c_genModifier" taille={16} />
+                </div>
               </div>
 
+              {/* Modification du sujet (textes, questionnaire, corrigé) */}
+              {editing && <EditeurSujet result={result} onChange={setResult} />}
+
               {/* Si CE : Onglets Fiche Apprenant / Corrigé Enseignant / Vue Complète */}
-              {result.ceExam && (
+              {!editing && result.ceExam && (
                 <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-2xl border border-slate-200/60 print:hidden">
                   <button
                     type="button"
@@ -1063,7 +1167,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
               )}
 
               {/* Onglets multi-documents si C1 (mode PE) */}
-              {!result.ceExam && result.documents.length > 1 && (
+              {!editing && !result.ceExam && result.documents.length > 1 && (
                 <div className="flex items-center gap-2 p-1 bg-slate-100/80 rounded-2xl border border-slate-200/60">
                   {result.documents.map((doc, idx) => (
                     <button
@@ -1087,7 +1191,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
               )}
 
               {/* 1. TEXTE DE L'ARTICLE SUPPORT */}
-              {(ceViewTab === "student" || ceViewTab === "full" || !result.ceExam) && (
+              {!editing && (ceViewTab === "student" || ceViewTab === "full" || !result.ceExam) && (
                 <div className="space-y-4 bg-slate-50/70 rounded-2xl p-6 border border-slate-100">
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 bg-white border border-slate-200 px-2.5 py-1 rounded-lg">
@@ -1127,7 +1231,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
               )}
 
               {/* 2. QUESTIONNAIRE CE : FICHE APPRENANT */}
-              {result.ceExam && (ceViewTab === "student" || ceViewTab === "full") && (
+              {!editing && result.ceExam && (ceViewTab === "student" || ceViewTab === "full") && (
                 <div className="space-y-6 pt-4 border-t border-slate-100">
                   <div className="bg-indigo-50/80 p-4 rounded-2xl border border-indigo-100 flex items-start gap-3">
                     <HelpCircle className="w-5 h-5 text-indigo-600 shrink-0 mt-0.5" />
@@ -1223,7 +1327,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
               )}
 
               {/* 3. CORRIGÉ ET BARÈME ENSEIGNANT */}
-              {result.ceExam && (ceViewTab === "teacher" || ceViewTab === "full") && (
+              {!editing && result.ceExam && (ceViewTab === "teacher" || ceViewTab === "full") && (
                 <div className="space-y-6 pt-4 border-t border-slate-100">
                   <div className="bg-emerald-50/80 p-4 rounded-2xl border border-emerald-200 flex items-start gap-3">
                     <Award className="w-5 h-5 text-emerald-700 shrink-0 mt-0.5" />
@@ -1383,7 +1487,7 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
 
                   <button
                     type="button"
-                    onClick={() => window.print()}
+                    onClick={handlePrint}
                     className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
                     title="Imprimer l'épreuve"
                   >
@@ -1427,6 +1531,20 @@ export default function SubjectGeneratorView({ apiKeys, onUseAsSubject }: Subjec
           )}
         </div>
       </div>
+
+      {/* Préparation par une IA externe : consignes à exporter, réponse à recoller */}
+      <AnimatePresence>
+        {paramsExterne && (
+          <GenerateurExterneModal
+            params={paramsExterne}
+            onApply={r => {
+              afficherResultat(r);
+              setParamsExterne(null);
+            }}
+            onClose={() => setParamsExterne(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
