@@ -39,7 +39,7 @@ export const AIDE_PARTAGE = {
     titre: "Modèle de lecture",
     texte: [
       "Choisit le modèle Gemini qui transforme les scans (ou les enregistrements) en texte.",
-      "Laissez 3.8 Flash. 3.6 Flash est une solution de secours si le premier est surchargé.",
+      "Les trois modèles disponibles fonctionnent avec une clé API gratuite : 4 Hydrogen (nouvelle génération), 3.8 Flash (recommandé par défaut) et 3.6 Flash (solution de secours si le premier est surchargé).",
     ],
   },
   partage_cleEvaluation: {
@@ -52,8 +52,8 @@ export const AIDE_PARTAGE = {
   partage_modeleEvaluation: {
     titre: "Modèle d'évaluation",
     texte: [
-      "Choisit le modèle qui note la copie. « Léger » (3.8 Flash) est rapide et suffit pour la plupart des copies.",
-      "« Lourd » (4 Argon) est plus fin, mais plus lent et plus coûteux en quota : à réserver aux cas difficiles.",
+      "Choisit le modèle qui note la copie. « Léger » (4 Hydrogen, 3.8 Flash ou 3.6 Flash, compatibles avec l'API gratuite) est rapide et suffit pour la plupart des copies.",
+      "« Lourd » (4 Argon, API facturée) est plus fin, mais plus lent et plus coûteux en quota : à réserver aux cas difficiles.",
     ],
   },
   partage_modeleDoubleEval: {

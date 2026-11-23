@@ -2808,7 +2808,8 @@ ${transcriptionPart2}
                         </select>
                       </div>
                       <div className="flex items-center gap-1">
-                      <div className="flex-1 grid grid-cols-2 gap-1 bg-white p-1 rounded-xl border border-slate-200">
+                      <div className="flex-1 grid grid-cols-3 gap-1 bg-white p-1 rounded-xl border border-slate-200">
+                        <button onClick={() => setOcrModel('gemini-4-hydrogen')} className={`py-1.5 rounded-lg text-[10px] font-bold transition-all ${ocrModel === 'gemini-4-hydrogen' || ocrModel === 'hydrogen' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:text-blue-600'}`}>4 Hydrogen</button>
                         <button onClick={() => setOcrModel('gemini-3.8-flash')} className={`py-1.5 rounded-lg text-[10px] font-bold transition-all ${ocrModel === 'gemini-3.8-flash' || ocrModel === 'gemini-flash' || ocrModel === 'gemini-3.7-flash' || ocrModel === 'gemini-3.5-flash' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:text-blue-600'}`}>3.8 Flash</button>
                         <button onClick={() => setOcrModel('gemini-3.6-flash')} className={`py-1.5 rounded-lg text-[10px] font-bold transition-all ${ocrModel === 'gemini-3.6-flash' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:text-blue-600'}`}>3.6 Flash</button>
                       </div>
@@ -2831,14 +2832,19 @@ ${transcriptionPart2}
                         </select>
                       </div>
                       <div className="flex items-start gap-1">
-                      <div className="flex-1 grid grid-cols-[auto_1fr_1fr] gap-1 items-center text-[10px]">
-                        <div className="px-2 py-1"></div>
-                        <div className="text-center font-bold text-slate-400 uppercase tracking-wider py-1">Léger</div>
-                        <div className="text-center font-bold text-slate-400 uppercase tracking-wider py-1">Lourd</div>
-                        {/* Gemini */}
-                        <div className="px-2 py-1 font-bold text-blue-600">Gemini</div>
-                        <button onClick={() => setEvalModel('flash')} className={`py-1.5 rounded-lg font-bold transition-all ${evalModel === 'flash' ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 hover:text-blue-600 border border-slate-200'}`}>3.8 Flash</button>
-                        <button onClick={() => setEvalModel('pro')} className={`py-1.5 rounded-lg font-bold transition-all ${evalModel === 'pro' ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 hover:text-blue-600 border border-slate-200'}`}>4 Argon</button>
+                      <div className="flex-1 space-y-1.5 text-[10px]">
+                        <div>
+                          <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider px-1 mb-1">Léger (API gratuite)</div>
+                          <div className="grid grid-cols-3 gap-1">
+                            <button onClick={() => setEvalModel('gemini-4-hydrogen')} className={`py-1.5 rounded-lg font-bold transition-all ${evalModel === 'gemini-4-hydrogen' || evalModel === 'hydrogen' ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 hover:text-blue-600 border border-slate-200'}`}>4 Hydrogen</button>
+                            <button onClick={() => setEvalModel('flash')} className={`py-1.5 rounded-lg font-bold transition-all ${evalModel === 'flash' || evalModel === 'gemini-3.8-flash' ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 hover:text-blue-600 border border-slate-200'}`}>3.8 Flash</button>
+                            <button onClick={() => setEvalModel('gemini-3.6-flash')} className={`py-1.5 rounded-lg font-bold transition-all ${evalModel === 'gemini-3.6-flash' ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 hover:text-blue-600 border border-slate-200'}`}>3.6 Flash</button>
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider px-1 mb-1">Lourd (API facturée)</div>
+                          <button onClick={() => setEvalModel('pro')} className={`w-full py-1.5 rounded-lg font-bold transition-all ${evalModel === 'pro' || evalModel === 'gemini-4-argon' || evalModel === 'argon' ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 hover:text-blue-600 border border-slate-200'}`}>4 Argon</button>
+                        </div>
                       </div>
                       <Aide cle="partage_modeleEvaluation" taille={14} className="mt-1.5" />
                       </div>
@@ -2867,13 +2873,19 @@ ${transcriptionPart2}
                           {supervisionMode === 'internal' && (
                           <div>
                             <div className="flex items-center gap-1 mb-1"><label className="text-[10px] font-bold text-slate-400 uppercase px-1 block">Modèle de double évaluation</label><Aide cle="partage_modeleDoubleEval" taille={13} /></div>
-                            <div className="grid grid-cols-[auto_1fr_1fr] gap-1 items-center text-[10px]">
-                              <div className="px-1 py-1"></div>
-                              <div className="text-center font-bold text-slate-400 uppercase py-0.5">Léger</div>
-                              <div className="text-center font-bold text-slate-400 uppercase py-0.5">Lourd</div>
-                              <div className="px-1 font-bold text-blue-600 text-[9px]">Gemini</div>
-                              <button onClick={() => { setSupervisionProvider('gemini'); setSupervisionModel('flash'); }} className={`py-1 rounded-lg font-bold transition-all ${supervisionProvider === 'gemini' && supervisionModel === 'flash' ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:text-blue-600'}`}>3.8 Flash</button>
-                              <button onClick={() => { setSupervisionProvider('gemini'); setSupervisionModel('pro'); }} className={`py-1 rounded-lg font-bold transition-all ${supervisionProvider === 'gemini' && supervisionModel === 'pro' ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:text-blue-600'}`}>4 Argon</button>
+                            <div className="space-y-1.5 text-[10px]">
+                              <div>
+                                <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider px-1 mb-1">Léger (API gratuite)</div>
+                                <div className="grid grid-cols-3 gap-1">
+                                  <button onClick={() => { setSupervisionProvider('gemini'); setSupervisionModel('gemini-4-hydrogen'); }} className={`py-1 rounded-lg font-bold transition-all ${supervisionProvider === 'gemini' && (supervisionModel === 'gemini-4-hydrogen' || supervisionModel === 'hydrogen') ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:text-blue-600'}`}>4 Hydrogen</button>
+                                  <button onClick={() => { setSupervisionProvider('gemini'); setSupervisionModel('flash'); }} className={`py-1 rounded-lg font-bold transition-all ${supervisionProvider === 'gemini' && (supervisionModel === 'flash' || supervisionModel === 'gemini-3.8-flash') ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:text-blue-600'}`}>3.8 Flash</button>
+                                  <button onClick={() => { setSupervisionProvider('gemini'); setSupervisionModel('gemini-3.6-flash'); }} className={`py-1 rounded-lg font-bold transition-all ${supervisionProvider === 'gemini' && supervisionModel === 'gemini-3.6-flash' ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:text-blue-600'}`}>3.6 Flash</button>
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider px-1 mb-1">Lourd (API facturée)</div>
+                                <button onClick={() => { setSupervisionProvider('gemini'); setSupervisionModel('pro'); }} className={`w-full py-1 rounded-lg font-bold transition-all ${supervisionProvider === 'gemini' && (supervisionModel === 'pro' || supervisionModel === 'gemini-4-argon' || supervisionModel === 'argon') ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:text-blue-600'}`}>4 Argon</button>
+                              </div>
                             </div>
                           </div>
                           )}

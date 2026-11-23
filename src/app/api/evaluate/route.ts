@@ -67,7 +67,7 @@ export async function POST(req: Request) {
       ocrAlerts = ocrResult.ocrAlerts || [];
     }
 
-    const geminiModel = (evalModel === 'pro' || evalModel === 'argon') ? 'pro' : 'flash';
+    const geminiModel = evalModel || 'flash';
 
     // ── NOUVEAUX TYPES D'ÉPREUVES PERSONNALISÉES ──────────────────────
     if (examType === 'dictee') {

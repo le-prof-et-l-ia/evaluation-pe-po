@@ -25,15 +25,19 @@ async function withRetryAndFallback(
 }
 
 /**
- * Chaîne de repli automatique pour les modèles Gemini Flash :
- * 1. Gemini 3.8 Flash (Dernière génération)
- * 2. Gemini 3.6 Flash (Repli en cas de timeout / surcharge)
+ * Chaîne de repli automatique pour les modèles Gemini gratuits :
+ * 1. Gemini 4 Hydrogen (Dernière génération gratuite)
+ * 2. Gemini 3.8 Flash (Repli rapide)
+ * 3. Gemini 3.6 Flash (Repli ultime en cas de timeout / surcharge)
  */
-export const GEMINI_FLASH_FALLBACK_CHAIN = ['gemini-3.8-flash', 'gemini-3.6-flash'];
+export const GEMINI_FLASH_FALLBACK_CHAIN = ['gemini-4-hydrogen', 'gemini-3.8-flash', 'gemini-3.6-flash'];
 
 export function resolveGeminiModel(modelInput?: string): string {
   if (!modelInput) return 'gemini-3.8-flash';
   const m = modelInput.toLowerCase();
+  if (m === 'hydrogen' || m.includes('4-hydrogen') || m === 'models/gemini-4-hydrogen') {
+    return 'gemini-4-hydrogen';
+  }
   if (m === 'flash' || m === 'gemini-flash' || m.includes('3.8-flash') || m === 'models/gemini-3.8-flash') {
     return 'gemini-3.8-flash';
   }
@@ -47,6 +51,9 @@ export function resolveGeminiModel(modelInput?: string): string {
 
 export function getGeminiModelChain(targetModel: string): string[] {
   const resolved = resolveGeminiModel(targetModel);
+  if (resolved === 'gemini-4-hydrogen') {
+    return ['gemini-4-hydrogen', 'gemini-3.8-flash', 'gemini-3.6-flash'];
+  }
   if (resolved === 'gemini-3.8-flash') {
     return ['gemini-3.8-flash', 'gemini-3.6-flash'];
   }
@@ -593,7 +600,7 @@ export async function extractText(
   onKeySelected?: (info: { key: string, isCustom: boolean }) => void,
   nativeLanguage?: string
 ): Promise<{ text: string; transcription: string; modelUsed?: string; fallbackNotice?: string }> {
-  const targetModel = ocrModel === 'gemini-3.6-flash' ? 'gemini-3.6-flash' : 'gemini-3.8-flash';
+  const targetModel = resolveGeminiModel(ocrModel);
   const isAudio = mimeType.startsWith('audio/') || 
     mimeType.startsWith('video/') || 
     ['application/octet-stream', 'audio/mp4', 'audio/x-m4a', 'video/mp4', 'audio/x-caf', 'audio/aac', 'audio/flac', 'audio/ogg', 'audio/wav', 'audio/webm', 'audio/mp3', 'audio/mpeg'].includes(mimeType);
@@ -788,13 +795,13 @@ export async function arbitrateEvaluation(
   subject: string,
   language: string = 'FR',
   temperature: number = 0.15,
-  evalModel: 'flash' | 'pro' = 'flash',
+  evalModel: 'flash' | 'pro' | string = 'flash',
   level: 'B1' | 'B2' | string = 'B2',
   apiKeys?: KeyConfig,
   onKeySelected?: (info: { key: string, isCustom: boolean }) => void,
   notationType: 'detailed' | 'delf' = 'detailed'
 ): Promise<CorrectionResult> {
-  const targetModel = (evalModel === 'pro' || (evalModel as string) === 'argon') ? 'gemini-4-argon' : 'gemini-3.8-flash';
+  const targetModel = resolveGeminiModel(evalModel);
   
   const criteria = level === 'B1'
     ? ['entretien', 'interaction', 'monologue', 'lexique', 'morphosyntaxe', 'phonologie']

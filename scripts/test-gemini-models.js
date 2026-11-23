@@ -8,7 +8,8 @@ const { GoogleGenAI } = require('@google/genai');
 const MODELS_TO_TEST = [
   { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (Production & OCR)' },
   { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite (Ultra Rapide)' },
-  { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash (Dernière génération)' },
+  { id: 'gemini-4-hydrogen', label: 'Gemini 4 Hydrogen (Dernière génération gratuite)' },
+  { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash' },
   { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash' },
   { id: 'gemini-4-argon', label: 'Gemini 4 Argon' },
   { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },

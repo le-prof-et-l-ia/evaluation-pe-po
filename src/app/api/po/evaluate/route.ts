@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { evaluateProduction, extractText, superviseEvaluation, evaluateInterpretation } from '@/lib/po/geminiService';
+import { getFriendlyModelName } from '@/lib/modelNames';
 
 export async function POST(req: Request) {
   try {
@@ -45,10 +46,10 @@ export async function POST(req: Request) {
           }
 
           // 2. Évaluation initiale
-          const modelLabel = (evalModel === 'pro' || evalModel === 'argon') ? 'Gemini 4 Argon' : evalModel === 'flash' ? 'Gemini Flash' : (evalModel || 'Gemini Flash');
+          const modelLabel = getFriendlyModelName(evalModel || 'flash');
           send({ type: 'progress', message: `🧠 Phase 2 : Évaluation initiale (${modelLabel})...` });
 
-          const geminiModel = (evalModel === 'pro' || evalModel === 'argon') ? 'pro' : 'flash';
+          const geminiModel = evalModel || 'flash';
           let result: any;
 
           if (isInterpretation) {
@@ -79,8 +80,8 @@ export async function POST(req: Request) {
 
           // 3. Double évaluation si demandée
           if (useDoubleEval && supervisionProvider && supervisionModel) {
-            const superModelLabel = supervisionModel.replace('-latest', '');
-            send({ type: 'progress', message: `⚖️ Phase 3 : Double évaluation (${supervisionProvider.toUpperCase()} ${superModelLabel})...` });
+            const superModelLabel = getFriendlyModelName(supervisionModel);
+            send({ type: 'progress', message: `⚖️ Phase 3 : Double évaluation (${superModelLabel})...` });
             try {
               const supervised = await superviseEvaluation(
                 result, studentTranscription, subject, language || 'FR', temperature || 0.3,
