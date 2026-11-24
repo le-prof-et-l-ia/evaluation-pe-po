@@ -14,7 +14,7 @@ import {
   type ExternalInitialTask,
   type ExternalSupervisionConfig,
 } from "@/lib/po/externalSupervision";
-import { obtenirEpreuve, estDelf, type ConfigEpreuve, type ContexteEpreuve } from "@/lib/epreuves/registre";
+import { obtenirEpreuve, estDelf, finaliserEvaluationInitialeExterne, type ConfigEpreuve, type ContexteEpreuve } from "@/lib/epreuves/registre";
 
 interface Props {
   mode?: 'initial' | 'supervision';
@@ -58,6 +58,7 @@ export default function ExternalSupervisionModal({ mode = 'supervision', tasks, 
   }, [tasks, chunkSize]);
 
   const activeChunk = chunks[activeChunkIndex] || [];
+  const toutEnUn = isInitial && activeChunk.some(t => !(t.transcription || '').trim());
 
   const markdown = useMemo(() => {
     if (activeChunk.length === 0) return "";
@@ -132,7 +133,7 @@ export default function ExternalSupervisionModal({ mode = 'supervision', tasks, 
         if (isInitial) {
           const task = (activeChunk as ExternalSupervisionTask[]).find(t => t.fileId === id)!;
           if (!epreuve) throw new Error("Épreuve inconnue.");
-          finalResult = epreuve.finaliser(match.evaluation, task, contexte);
+          finalResult = finaliserEvaluationInitialeExterne(epreuve, match.evaluation, task, contexte);
         } else {
           const st = (activeChunk as ExternalSupervisionTask[]).find(t => t.fileId === id)!;
           finalResult = finalizeExternalSupervision(st.result1, match.evaluation, {
@@ -206,7 +207,7 @@ export default function ExternalSupervisionModal({ mode = 'supervision', tasks, 
               : `${totalItems} enregistrement(s) à superviser. Sans clé API : exportez les consignes, faites-les traiter par une IA externe, puis réimportez le JSON produit. La fusion des notes reste calculée par l'application.`}
           </p>
 
-          {isInitial && activeChunk.some(t => !(t.transcription || '').trim()) && (
+          {toutEnUn && (
             <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-2xl p-4 text-xs space-y-1.5">
               <p className="font-bold flex items-center gap-2 text-emerald-800">
                 🎙️ Mode Tout-en-un : Transcription Audio (GPU prioritaire) + Évaluation en une seule fois
@@ -217,7 +218,7 @@ export default function ExternalSupervisionModal({ mode = 'supervision', tasks, 
             </div>
           )}
 
-          {isInitial && epreuve?.avertissement && (
+          {isInitial && !toutEnUn && epreuve?.avertissement && (
             <div className="flex items-start gap-2 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-xl p-3">
               <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" /> <span>{epreuve.avertissement}</span>
             </div>

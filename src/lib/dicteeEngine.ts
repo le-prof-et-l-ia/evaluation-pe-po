@@ -14,8 +14,8 @@ import { DictationPenaltyConfig, DictationErrorItem, DictationResult, DEFAULT_DI
  * Impose de retranscrire mot à mot et caractère par caractère ce qui est écrit,
  * sans aucune correction automatique du français.
  */
-export function getDictationOcrPrompt(): string {
-  return `Tu es un transcripteur paléographique et expert OCR spécialisé dans la saisie de DICTÉES MANUSCRITES.
+export function getDictationOcrPrompt(embedded = false): string {
+  const instructions = `Tu es un transcripteur paléographique et expert OCR spécialisé dans la saisie de DICTÉES MANUSCRITES.
 Ta mission est d'extraire le texte manuscrit de la copie d'examen de l'élève avec une FIDÉLITÉ ABSOLUE AU CARACTÈRE PRÈS.
 
 ⚠️⚠️ RÈGLE FONDAMENTALE DE LA DICTÉE : INTERDICTION STRICTE DE TOUTE CORRECTION AUTOMATIQUE ⚠️⚠️
@@ -26,7 +26,11 @@ Ta mission est d'extraire le texte manuscrit de la copie d'examen de l'élève a
    - Accents omis, erronés ou inversés (ex: si l'élève écrit « a » au lieu de « à », « été » au lieu de « ete », ou omet un accent circonflexe/tréma, ne rajoute ni ne corrige AUCUN accent).
    - Majuscules et ponctuation : conserve scrupuleusement la présence ou l'absence des majuscules, points, virgules, tirets et guillemets tracés par l'élève.
    - Mots raturés ou rayés : ignore les mots complètement barrés/raturés.
-3. Ne normalise JAMAIS le texte vers le bon français. Si un mot est ambigu mais ressemble clairement à une tentative erronée (ex: « apeller » avec un seul l), retranscris la graphie exacte de l'élève.
+3. Ne normalise JAMAIS le texte vers le bon français. Si un mot est ambigu mais ressemble clairement à une tentative erronée (ex: « apeller » avec un seul l), retranscris la graphie exacte de l'élève.`;
+
+  if (embedded) return instructions;
+
+  return `${instructions}
 
 FORMAT DE SORTIE JSON STRICT :
 {

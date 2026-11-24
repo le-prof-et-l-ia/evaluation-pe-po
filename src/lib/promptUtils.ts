@@ -227,7 +227,7 @@ export function getPoliteFormInstruction(language: string): string {
   return "5. POLITE ADDRESS FORM : In all feedback sections addressed to the student (justifications and advices), use a polite, respectful, and encouraging tone suitable for pedagogical feedback.";
 }
 
-export function buildEvalSystemPrompt(level: string, language: string, gradingMode: 'detailed' | 'delf' = 'delf', nativeLanguage?: string): string {
+export function buildEvalSystemPrompt(level: string, language: string, gradingMode: 'detailed' | 'delf' = 'delf', nativeLanguage?: string, embedded = false): string {
   let nativeLangInstruction = "";
   if (nativeLanguage && nativeLanguage !== 'Aucune' && nativeLanguage !== 'none') {
     nativeLangInstruction = `\n- INFLUENCE LINGUISTIQUE DE L'ÉTUDIANT : L'étudiant est influencé par la/les langue(s) suivante(s) : ${nativeLanguage}.
@@ -432,8 +432,8 @@ ${getPoliteFormInstruction(language)}
 6. CONTENU DES BROUILLONS OBLIGATOIRE : Les champs 'brouillon_phase1_audit' et 'brouillon_phase2_analyse' doivent être obligatoirement rédigés dans la langue du rapport (Français par défaut) et contenir ton véritable travail d'audit linguistique structuré et d'analyse qualitative. Il est strictement interdit d'y inclure des notes chiffrées ou fractions de note (ex: "Décision: 5/5"), ou d'y écrire des messages types de log/validation technique en anglais.
 7. OBLIGATION STRICTE DES 5 CRITÈRES DÉTAILLÉS SANS AUCUN CHAMP VIDE (CRITIQUE) : Tu DOIS obligatoirement et impérativement renseigner chacune des 5 clés exactes ("realisation", "coherence", "sociolinguistique", "lexique", "morphosyntaxe") dans "criteriaScores", "justifications" ET "advices". Aucun critère ne doit être omis, fusionné, renommé ou laissé vide ("" ou null). Chaque critère doit obligatoirement comporter sa propre justification argumentée et substantielle (avec au moins 1 à 2 citations textuelles de la copie entre guillemets) et ses propres conseils pédagogiques individualisés.
 
-⚠️ DIRECTIVE DE FORMAT DE SORTIE JSON (CRITIQUE) :
-Tu dois obligatoirement retourner uniquement un objet JSON brut respectant STRICTEMENT la structure suivante :
+${embedded ? 'Structure du champ "evaluation" de chaque copie dans le tableau final :' : `⚠️ DIRECTIVE DE FORMAT DE SORTIE JSON (CRITIQUE) :
+Tu dois obligatoirement retourner uniquement un objet JSON brut respectant STRICTEMENT la structure suivante :`}
 {
   "studentEmail": string | null,
   "studentName": string | null,
@@ -471,7 +471,7 @@ Tu dois obligatoirement retourner uniquement un objet JSON brut respectant STRIC
   ]
 }
 Tu dois fournir des explications textuelles riches et des conseils constructifs pour CHAQUE critère dans "justifications" et "advices". Ne laisse aucun champ vide.
-Ne mets aucune balise markdown (comme le bloc de code json), ne mets aucune phrase d'introduction ni de conclusion, retourne uniquement le JSON.`;
+${embedded ? 'Insère ce rapport dans le champ "evaluation" de la copie.' : "Ne mets aucune balise markdown (comme le bloc de code json), ne mets aucune phrase d'introduction ni de conclusion, retourne uniquement le JSON."}`;
 }
 
 export function buildSupervisorPrompt(level: string, language: string, gradingMode: 'detailed' | 'delf' = 'delf', nativeLanguage?: string): string {
@@ -591,8 +591,10 @@ IMPORTANT: Retourne un objet JSON respectant STRICTEMENT la structure de premier
 }`;
 }
 
-export function buildEvalUserPrompt(subject: string, studentTranscription: string, language: string = 'FR'): string {
-  const wordCount = countWords(studentTranscription);
+export function buildEvalUserPrompt(subject: string, studentTranscription: string, language: string = 'FR', pendingTranscription = false): string {
+  const wordCountInfo = pendingTranscription
+    ? 'Compte les mots du texte manuscrit une fois transcrit.'
+    : `[INFO] Nombre de mots réel (calculé par le système) : ${countWords(studentTranscription)} mots.`;
   let reminder = "";
   if (language === 'FR') {
     reminder = `⚠️ RAPPEL D'ORTHOGRAPHE CRITIQUE : Tu dois obligatoirement rédiger TOUTES les sections textuelles du JSON (justifications, conseils/advices, brouillons, errorsTable.rule) en français correct en utilisant impérativement tous les accents de la langue française (é, è, à, â, ê, î, ô, û, ç, etc.). Ne supprime ou n'omets aucun accent. L'absence d'accents (ex: écrire "a" au lieu de "à", "repondre" au lieu de "répondre", "dechets" au lieu de "déchets") est strictement interdite.`;
@@ -606,7 +608,7 @@ export function buildEvalUserPrompt(subject: string, studentTranscription: strin
     reminder = `⚠️ RAPPEL DE FORMAT CRITIQUE : Tu dois obligatoirement rédiger TOUTES les sections textuelles du JSON (justifications, conseils/advices, brouillons, errorsTable.rule) en tchèque en utilisant correctement tous les accents et signes diacritiques (čeština s diakritikou). L'absence d'accents tchèques (ex: écrire "cestina" au lieu de "čeština", "zkouska" au lieu de "zkouška") est strictement interdite.`;
   }
   const langBanner = `[LANGUE REQUISE POUR LE RAPPORT : ${language === 'VN' ? 'VIETNAMIEN (tiếng Việt có dấu - INTERDICTION STRICTE DU FRANÇAIS DANS LES COMMENTAIRES)' : language === 'TW' ? 'CHINOIS TRADITIONNEL (繁體中文)' : language === 'EN' ? 'ANGLAIS (English)' : language === 'CZ' ? 'TCHÈQUE (čeština)' : 'FRANÇAIS (avec tous les accents)'}]`;
-  return `${langBanner}\nSujet : "${subject}"\nTexte de l'étudiant : "${studentTranscription}"\n\n[INFO] Nombre de mots réel (calculé par le système) : ${wordCount} mots.\n\nAnalyse cette production selon ta Triple Cascade de réflexion.\n\n${reminder}`;
+  return `${langBanner}\nSujet : "${subject}"\nTexte de l'étudiant : "${studentTranscription}"\n\n${wordCountInfo}\n\nAnalyse cette production selon ta Triple Cascade de réflexion.\n\n${reminder}`;
 }
 
 /**
@@ -1022,13 +1024,24 @@ export function computeJuryResult(result1: CorrectionResult, result2: Correction
   return finalResult;
 }
 
-export function getOcrPrompt(level: string = 'B2', nativeLanguage?: string): string {
+export function getOcrPrompt(
+  level: string = 'B2',
+  nativeLanguage?: string,
+  mode: 'standalone' | 'embedded-handwritten' | 'embedded-copy' = 'standalone',
+): string {
+  const embedded = mode !== 'standalone';
   const examTitle = `DELF ${level}`;
-  let ocrPrompt = `Transcris fidèlement ce texte ${examTitle}.
-CONSIGNE DE FILTRAGE : Ne transcris QUE l'écriture manuscrite rédigée par l'étudiant. Ignore absolument tout le texte imprimé en caractères d'imprimerie (police machine), y compris s'il est dans une langue autre que le français (par exemple, des en-têtes pré-imprimés en vietnamien comme "Họ và tên", "SBD", des consignes d'examen, des numéros de pages, ou la marque du papier comme "Clairefontaine" ou "Seyes").
+  const filter = mode === 'embedded-copy'
+    ? `CONSIGNE DE FILTRAGE : Transcris uniquement le texte rédigé par l'étudiant, qu'il soit manuscrit ou saisi à l'ordinateur. Écarte l'énoncé, le texte source, les consignes et les en-têtes du formulaire.`
+    : `CONSIGNE DE FILTRAGE : Ne transcris QUE l'écriture manuscrite rédigée par l'étudiant. Ignore absolument tout le texte imprimé en caractères d'imprimerie (police machine), y compris s'il est dans une langue autre que le français (par exemple, des en-têtes pré-imprimés en vietnamien comme "Họ và tên", "SBD", des consignes d'examen, des numéros de pages, ou la marque du papier comme "Clairefontaine" ou "Seyes").`;
+  const identity = mode === 'embedded-copy'
+    ? `CONSIGNE D'IDENTIFICATION : Relève le nom et l'adresse e-mail s'ils sont explicitement présentés comme ceux de l'étudiant sur la copie.`
+    : `CONSIGNE D'IDENTIFICATION ET D'ALERTES : Si le nom, le prénom ou l'adresse e-mail de l'étudiant sont écrits à la main (par exemple dans une zone d'en-tête pré-imprimée comme "Nom :", "Họ và tên :", "SBD :", "Email :", etc.), tu DOIS absolument les extraire.`;
+  let ocrPrompt = `${embedded ? 'Transcris fidèlement le texte de cette copie.' : `Transcris fidèlement ce texte ${examTitle}.`}
+${filter}
 
-CONSIGNE D'IDENTIFICATION ET D'ALERTES : Si le nom, le prénom ou l'adresse e-mail de l'étudiant sont écrits à la main (par exemple dans une zone d'en-tête pré-imprimée comme "Nom :", "Họ và tên :", "SBD :", "Email :", etc.), tu DOIS absolument les extraire.
-De plus, si tu as des doutes de lecture (par exemple : caractères ambigus, ratures mal effacées, mots répétés, mots visiblement tronqués par l'OCR, lettres confondues comme "cl" au lieu de "d", ou absence suspecte d'accents sur certains mots), liste également ces doutes sous forme d'alertes.
+${identity}
+${embedded ? "Si un passage reste illisible après vérification, indique [illisible] à son emplacement dans la transcription et ne le compte pas comme une faute de l'étudiant." : `De plus, si tu as des doutes de lecture (par exemple : caractères ambigus, ratures mal effacées, mots répétés, mots visiblement tronqués par l'OCR, lettres confondues comme "cl" au lieu de "d", ou absence suspecte d'accents sur certains mots), liste également ces doutes sous forme d'alertes.`}
 
 ⚠️ ANALYSE DES GRAPHIES ET RÉSOLUTION DES AMBIGUÏTÉS :
 Pour fiabiliser la transcription des caractères ambigus et éviter les fausses alertes, tu dois analyser l'ensemble du document à la recherche de régularités graphologiques propres à l'étudiant. Si l'étudiant a une façon particulière d'écrire une lettre qui ressemble à une autre (par exemple, un 'r' ressemblant à un 's', un 'v' à un 'u', ou un 'cl' à un 'd') :
@@ -1037,7 +1050,7 @@ Pour fiabiliser la transcription des caractères ambigus et éviter les fausses 
 3. Si la comparaison et le sens contextuel grammatical confirment la lettre attendue (ex: l'infinitif 'développer' ou 'faire'), transcris-la correctement sans lever d'alerte infondée.
 4. ACCENTUATION ET FAUSSES APOSTROPHES (ÉCART D'ÉCRITURE) : Si l'étudiant écrit des accents légèrement déplacés vers la droite après une lettre (par exemple, "e'" au lieu de "é", "a'" au lieu de "à", "o'" au lieu de "ô"), ce tracé ressemble souvent à une apostrophe. Tu DOIS transcrire directement le caractère accentué standard voulu ("é", "à", "ô", etc.) sans insérer d'apostrophe erronée, et sans mentionner d'alerte ou de doute d'OCR.
 
-Tu dois écrire ces informations au tout début de ta réponse sous ce format strict :
+${embedded ? '' : `Tu dois écrire ces informations au tout début de ta réponse sous ce format strict :
 [METADATA]
 Nom: [Nom de l'étudiant ou "Non spécifié"]
 Email: [Email de l'étudiant ou "Non spécifié"]
@@ -1047,14 +1060,16 @@ Alerte: [Description concise de l'alerte de lecture 2]
 
 S'il n'y a aucun doute ni alerte de lecture, n'ajoute pas de lignes "Alerte:".
 
-CONSIGNE CRITIQUE : Ignore totalement les passages raturés, barrés ou gribouillés. Ne les remplace PAS par des symboles (comme ~~). Saute-les simplement.
+`}CONSIGNE CRITIQUE : Ignore totalement les passages raturés, barrés ou gribouillés. Ne les remplace PAS par des symboles (comme ~~). Saute-les simplement.
 INCLUS toutes les fautes d'orthographe, de grammaire ou de syntaxe présentes dans l'original : NE CORRIGE RIEN.`;
 
   if (nativeLanguage && nativeLanguage !== 'Aucune' && nativeLanguage !== 'none') {
     ocrPrompt += `\n- LANGUE MATERNELLE : La langue maternelle de l'étudiant est le ${nativeLanguage}. Prends en compte les interférences de sa langue maternelle (par exemple les fautes typiques ou les tracés de lettres caractéristiques) pour une transcription OCR fidèle de sa copie manuscrite en français, tout en respectant scrupuleusement la consigne de ne pas corriger ses erreurs de langue.`;
   }
 
-  ocrPrompt += `\nRends UNIQUEMENT la transcription, sans aucune phrase d'introduction ni de conclusion.`;
+  if (!embedded) {
+    ocrPrompt += `\nRends UNIQUEMENT la transcription, sans aucune phrase d'introduction ni de conclusion.`;
+  }
   return ocrPrompt;
 }
 

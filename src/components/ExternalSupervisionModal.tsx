@@ -13,7 +13,7 @@ import {
   type ExternalInitialTask,
   type ExternalSupervisionConfig,
 } from "@/lib/externalSupervision";
-import { obtenirEpreuve, estDelf, type ConfigEpreuve, type ContexteEpreuve } from "@/lib/epreuves/registre";
+import { obtenirEpreuve, estDelf, finaliserEvaluationInitialeExterne, type ConfigEpreuve, type ContexteEpreuve } from "@/lib/epreuves/registre";
 
 interface Props {
   /** 'initial' = 1re évaluation externe ; 'supervision' = 2e (double évaluation). */
@@ -134,7 +134,7 @@ export default function ExternalSupervisionModal({ mode = 'supervision', tasks, 
         if (isInitial) {
           const task = (activeChunk as ExternalSupervisionTask[]).find(t => t.fileId === id)!;
           if (!epreuve) throw new Error("Épreuve inconnue.");
-          finalResult = epreuve.finaliser(match.evaluation, task, contexte);
+          finalResult = finaliserEvaluationInitialeExterne(epreuve, match.evaluation, task, contexte);
         } else {
           const st = (activeChunk as ExternalSupervisionTask[]).find(t => t.fileId === id)!;
           finalResult = finalizeExternalSupervision(st.result1, match.evaluation, config.gradingMode, "IA externe", firstProviderLabel);

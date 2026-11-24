@@ -291,7 +291,7 @@ export function getPoliteFormInstruction(language: string): string {
   return `5. ZDVOŘILÉ VYKÁNÍ : Ve všech textových částech pro studenta (odůvodnění a doporučení) používejte zdvořilé vykání přiměřené pedagogickému hodnocení.`;
 }
 
-export function buildEvalSystemPrompt(level: string, language: string, notationType: 'detailed' | 'delf' = 'detailed'): string {
+export function buildEvalSystemPrompt(level: string, language: string, notationType: 'detailed' | 'delf' = 'detailed', embedded = false): string {
   const isB1 = level === 'B1';
   
   const b1Grille = `
@@ -536,7 +536,7 @@ ${getPoliteFormInstruction(language)}
 6. CONTENU DES BROUILLONS OBLIGATOIRE ET SANS NOTES CHIFFRÉES : Les champs 'brouillon_phase1_audit' et 'brouillon_phase2_analyse' doivent contenir ton véritable travail d'audit linguistique structuré et d'analyse qualitative sans aucune note chiffrée, ni fraction, ni jargon de double évaluation.
 7. OBLIGATION STRICTE DES CRITÈRES DÉTAILLÉS SANS AUCUN CHAMP VIDE (CRITIQUE) : Tu DOIS obligatoirement et impérativement renseigner chacune des clés requises dans "criteriaScores", "justifications" ET "advices". Aucun critère ne doit être omis, fusionné, renommé ou laissé vide ("" ou null). Chaque critère doit obligatoirement comporter sa propre justification argumentée et substantielle (avec au moins 1 à 2 citations textuelles de la transcription entre guillemets) et ses propres conseils pédagogiques individualisés.
 
-Tu DOIS impérativement retourner un objet JSON respectant STRICTEMENT la structure de premier niveau suivante :
+${embedded ? 'Structure du champ "evaluation" de chaque copie dans le tableau final :' : 'Tu DOIS impérativement retourner un objet JSON respectant STRICTEMENT la structure de premier niveau suivante :'}
 {
   "studentEmail": string | null,
   "studentName": string | null,
@@ -563,7 +563,7 @@ ${criteriaTextExample}
   ]
 }
 Tu dois fournir des explications textuelles riches et des conseils constructifs pour CHAQUE critère dans "justifications" et "advices". Ne laisse aucun champ vide.
-Ne mets aucune balise markdown (comme le bloc de code json), ne mets aucune phrase d'introduction ni de conclusion, retourne uniquement le JSON.`;
+${embedded ? 'Insère ce rapport dans le champ "evaluation" de la copie.' : "Ne mets aucune balise markdown (comme le bloc de code json), ne mets aucune phrase d'introduction ni de conclusion, retourne uniquement le JSON."}`;
 }
 
 export function buildSupervisorPrompt(level: string, language: string, notationType: 'detailed' | 'delf' = 'detailed'): string {
@@ -757,8 +757,10 @@ export function countCandidateWords(text: string): number {
   return cleanedText.trim().split(/\s+/).filter(Boolean).length;
 }
 
-export function buildEvalUserPrompt(subject: string, studentTranscription: string, language: string = 'FR'): string {
-  const wordCount = countCandidateWords(studentTranscription);
+export function buildEvalUserPrompt(subject: string, studentTranscription: string, language: string = 'FR', pendingTranscription = false): string {
+  const wordCountInfo = pendingTranscription
+    ? 'Estime le nombre de mots prononcés par le candidat une fois sa prestation transcrite.'
+    : `[INFO] Nombre de mots approximatif du candidat : ${countCandidateWords(studentTranscription)} mots.`;
   let reminder = "";
   let langHeader = "";
   if (language === 'FR') {
@@ -777,7 +779,7 @@ export function buildEvalUserPrompt(subject: string, studentTranscription: strin
     langHeader = `[LANGUE REQUISE POUR LE RAPPORT : TCHÈQUE (ČEŠTINA)]`;
     reminder = `⚠️ RAPPEL DE FORMAT CRITIQUE : Tu dois obligatoirement rédiger TOUTES les sections textuelles du JSON (justifications, conseils/advices, brouillons, errorsTable.rule) en tchèque en utilisant correctement tous les accents et signes diacritiques (čeština s diakritikou).`;
   }
-  return `${langHeader}\n\nSujet : "${subject}"\nTranscription de la production orale du candidat : "${studentTranscription}"\n\n[INFO] Nombre de mots approximatif du candidat : ${wordCount} mots.\n\nAnalyse cette production orale et complète la grille d'évaluation.\n\n${reminder}`;
+  return `${langHeader}\n\nSujet : "${subject}"\nTranscription de la production orale du candidat : "${studentTranscription}"\n\n${wordCountInfo}\n\nAnalyse cette production orale et complète la grille d'évaluation.\n\n${reminder}`;
 }
 
 /**
@@ -1265,7 +1267,7 @@ export function computeJuryResult(
   return finalResult;
 }
 
-export function getAudioTranscriptionPrompt(level: 'B1' | 'B2' | string = 'B2', nativeLanguage?: string): string {
+export function getAudioTranscriptionPrompt(level: 'B1' | 'B2' | string = 'B2', nativeLanguage?: string, embedded = false): string {
   let audioPrompt = `Transcris fidèlement cet enregistrement audio DELF ${level} réalisé par un candidat non-francophone.
 CONSIGNE CRITIQUE : Effectue une transcription mot à mot ultra-fidèle.
 
@@ -1287,9 +1289,11 @@ CONSIGNE CRITIQUE : Effectue une transcription mot à mot ultra-fidèle.
   4. INTERDICTION D'INVENTER : Ne complète pas les phrases inachevées. Ne supprime pas les répétitions ou les tics de langage ("euh", "enfin", "voilà", "donc").
 
 - QUALITÉ DE L'ENREGISTREMENT ET BRUITS :
-  Ignore les bruits de fond, soupirs ou bruits parasites sauf s'ils masquent totalement la voix (dans ce cas, note "[inaudible]").
+  Ignore les bruits de fond, soupirs ou bruits parasites sauf s'ils masquent totalement la voix (dans ce cas, note "[inaudible]").`;
 
-Rends UNIQUEMENT la transcription structurée selon les locuteurs, sans aucune phrase d'introduction ni de conclusion.`;
+  if (!embedded) {
+    audioPrompt += "\n\nRends UNIQUEMENT la transcription structurée selon les locuteurs, sans aucune phrase d'introduction ni de conclusion.";
+  }
 
   if (nativeLanguage && nativeLanguage !== 'Aucune' && nativeLanguage !== 'none') {
     audioPrompt += `\n\n- INFLUENCE LINGUISTIQUE DU CANDIDAT : Le candidat est influencé par la/les langue(s) : ${nativeLanguage}. Prends en compte ses spécificités phonétiques et accentuelles pour une transcription ultra-fidèle.`;

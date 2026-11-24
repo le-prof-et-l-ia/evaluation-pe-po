@@ -135,17 +135,19 @@ ${customBlock}
 }
 
 /**
- * Consignes de transcription d'une prestation d'interprétation (dossier d'échange,
- * pour une application d'IA de bureau qui a accès aux fichiers audio).
- * La transcription doit rester fidèle : c'est elle seule que l'évaluateur externe lira.
+ * Consignes de transcription fidèle d'une prestation d'interprétation.
  */
-export function getInterpretationTranscriptionPrompt(): string {
-  return `Tu transcris l'enregistrement d'un étudiant-interprète qui restitue un discours.
+export function getInterpretationTranscriptionPrompt(embedded = false): string {
+  const instructions = `Tu transcris l'enregistrement d'un étudiant-interprète qui restitue un discours.
 RÈGLES :
 1. Transcris mot à mot ce que dit l'étudiant, dans la langue où il parle, SANS corriger ni reformuler : fautes de langue, calques, phrases inachevées et omissions restent tels quels.
 2. Note les hésitations et les reprises telles qu'elles s'entendent (« euh », « hum », mots répétés, autocorrections), et les silences notables sous la forme [pause] ou [silence long].
 3. Ce qui est inaudible est noté [inaudible] ; ne devine jamais un passage que tu n'entends pas.
-4. Ne transcris pas le discours de l'orateur s'il est présent sur l'enregistrement : uniquement la restitution de l'étudiant.
+4. Ne transcris pas le discours de l'orateur s'il est présent sur l'enregistrement : uniquement la restitution de l'étudiant.`;
+
+  if (embedded) return instructions;
+
+  return `${instructions}
 
 FORMAT DE SORTIE JSON STRICT :
 {
