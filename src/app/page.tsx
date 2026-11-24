@@ -705,14 +705,18 @@ export default function Home() {
         const final = results[0]?.finalResult;
         if (final) {
           const appliedSubject = final.subject || base?.subject || externalTasks[0]?.subject || subject || '';
+          const resolvedTranscription = (base?.transcription || '').trim() || final.transcription || '';
           const appliedData = {
             ...final,
             id: (base as any)?.id || final.id,
             subject: appliedSubject,
             studentName: base?.studentName ?? final.studentName,
             studentEmail: base?.studentEmail ?? final.studentEmail,
-            transcription: base?.transcription ?? final.transcription,
+            transcription: resolvedTranscription,
           };
+          if (!text.trim() && resolvedTranscription) {
+            setText(resolvedTranscription);
+          }
           autoSaveToHistory(appliedData).then(savedId => {
             if (savedId) {
               setEvaluationResult(prev => prev ? { ...prev, id: savedId } : appliedData);
@@ -2425,13 +2429,13 @@ export default function Home() {
                           <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider px-1 mb-1">Léger (API gratuite)</div>
                           <div className="grid grid-cols-3 gap-1">
                             <button onClick={() => setEvalModel('gemini-4-hydrogen')} className={`py-1.5 rounded-lg font-bold transition-all ${evalModel === 'gemini-4-hydrogen' || evalModel === 'hydrogen' ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 hover:text-blue-600 border border-slate-200'}`}>4 Hydrogen</button>
-                            <button onClick={() => setEvalModel('flash')} className={`py-1.5 rounded-lg font-bold transition-all ${evalModel === 'flash' || evalModel === 'gemini-3.8-flash' ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 hover:text-blue-600 border border-slate-200'}`}>3.8 Flash</button>
+                            <button onClick={() => setEvalModel('gemini-3.8-flash')} className={`py-1.5 rounded-lg font-bold transition-all ${evalModel === 'flash' || evalModel === 'gemini-3.8-flash' ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 hover:text-blue-600 border border-slate-200'}`}>3.8 Flash</button>
                             <button onClick={() => setEvalModel('gemini-3.6-flash')} className={`py-1.5 rounded-lg font-bold transition-all ${evalModel === 'gemini-3.6-flash' ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 hover:text-blue-600 border border-slate-200'}`}>3.6 Flash</button>
                           </div>
                         </div>
                         <div>
                           <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider px-1 mb-1">Lourd (API facturée)</div>
-                          <button onClick={() => setEvalModel('pro')} className={`w-full py-1.5 rounded-lg font-bold transition-all ${evalModel === 'pro' || evalModel === 'gemini-4-argon' || evalModel === 'argon' ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 hover:text-blue-600 border border-slate-200'}`}>4 Argon</button>
+                          <button onClick={() => setEvalModel('pro')} className={`w-full py-1.5 rounded-lg font-bold transition-all ${evalModel === 'pro' || evalModel === 'gemini-4-neon' || evalModel === 'neon' || evalModel === 'gemini-4-argon' || evalModel === 'argon' ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 hover:text-blue-600 border border-slate-200'}`}>4 Neon</button>
                         </div>
                       </div>
                     </div>
@@ -2464,13 +2468,13 @@ export default function Home() {
                                 <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider px-1 mb-1">Léger (API gratuite)</div>
                                 <div className="grid grid-cols-3 gap-1">
                                   <button onClick={() => { setSupervisionProvider('gemini'); setSupervisionModel('gemini-4-hydrogen'); }} className={`py-1 rounded-lg font-bold transition-all ${supervisionProvider === 'gemini' && (supervisionModel === 'gemini-4-hydrogen' || supervisionModel === 'hydrogen') ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:text-blue-600'}`}>4 Hydrogen</button>
-                                  <button onClick={() => { setSupervisionProvider('gemini'); setSupervisionModel('flash'); }} className={`py-1 rounded-lg font-bold transition-all ${supervisionProvider === 'gemini' && (supervisionModel === 'flash' || supervisionModel === 'gemini-3.8-flash') ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:text-blue-600'}`}>3.8 Flash</button>
+                                  <button onClick={() => { setSupervisionProvider('gemini'); setSupervisionModel('gemini-3.8-flash'); }} className={`py-1 rounded-lg font-bold transition-all ${supervisionProvider === 'gemini' && (supervisionModel === 'flash' || supervisionModel === 'gemini-3.8-flash') ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:text-blue-600'}`}>3.8 Flash</button>
                                   <button onClick={() => { setSupervisionProvider('gemini'); setSupervisionModel('gemini-3.6-flash'); }} className={`py-1 rounded-lg font-bold transition-all ${supervisionProvider === 'gemini' && supervisionModel === 'gemini-3.6-flash' ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:text-blue-600'}`}>3.6 Flash</button>
                                 </div>
                               </div>
                               <div>
                                 <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider px-1 mb-1">Lourd (API facturée)</div>
-                                <button onClick={() => { setSupervisionProvider('gemini'); setSupervisionModel('pro'); }} className={`w-full py-1 rounded-lg font-bold transition-all ${supervisionProvider === 'gemini' && (supervisionModel === 'pro' || supervisionModel === 'gemini-4-argon' || supervisionModel === 'argon') ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:text-blue-600'}`}>4 Argon</button>
+                                <button onClick={() => { setSupervisionProvider('gemini'); setSupervisionModel('pro'); }} className={`w-full py-1 rounded-lg font-bold transition-all ${supervisionProvider === 'gemini' && (supervisionModel === 'pro' || supervisionModel === 'gemini-4-neon' || supervisionModel === 'neon' || supervisionModel === 'gemini-4-argon' || supervisionModel === 'argon') ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:text-blue-600'}`}>4 Neon</button>
                               </div>
                             </div>
                           </div>
@@ -2889,8 +2893,7 @@ export default function Home() {
                   <button
                     onClick={() => {
                       if (!externalEvalSupported) return alert(EXTERNAL_UNSUPPORTED_MSG);
-                      if (estDelf(examType) && (!subject || !text)) return alert("Veuillez remplir le sujet et le texte.");
-                      if (!estDelf(examType) && !text.trim()) return alert("Veuillez renseigner la copie de l'élève (texte saisi ou transcrit).");
+                      if (estDelf(examType) && !subject.trim()) return alert("Veuillez remplir le sujet avant de lancer l'évaluation externe.");
                       openExternalInitial('single', [{
                         fileId: 'single',
                         subject: estDelf(examType) ? subject : buildExamFields(subject).subject,
@@ -2899,7 +2902,7 @@ export default function Home() {
                       }]);
                     }}
                     className="flex items-center gap-2 px-6 py-4 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-2xl font-bold transition-all border border-amber-200 shadow-sm hover:shadow active:scale-95"
-                    title="Procéder à l'évaluation initiale externe (sans clé API)"
+                    title="Procéder à l'évaluation initiale externe (sans clé API) — avec ou sans transcription préalable"
                   >
                     <Brain className="w-5 h-5 text-amber-600" /> Éval. externe
                   </button>

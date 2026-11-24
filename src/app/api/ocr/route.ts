@@ -15,7 +15,7 @@ export async function POST(req: Request) {
       files || fileUri,
       mimeType,
       level || 'B2',
-      ocrModel || 'gemini-3.8-flash',
+      ocrModel || 'gemini-4-hydrogen',
       apiKeys?.gemini,
       undefined,
       nativeLanguage,

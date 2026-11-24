@@ -130,7 +130,7 @@ export async function POST(req: Request) {
             publishedDate: articleToUse.publishedDate,
             url: articleToUse.originalUrl
           },
-          modelUsed: 'gemini-3.8-flash',
+          modelUsed: 'gemini-4-hydrogen',
           ceExam,
           isCeExam: true
         };

@@ -82,13 +82,13 @@ export default function SupervisionRecoveryModal({
                       <div className="text-[9px] font-bold text-slate-400 uppercase py-0.5 px-1">Léger (API gratuite)</div>
                       <div className="grid grid-cols-3 gap-1">
                         <button onClick={() => { setSupervisionProvider('gemini'); setSupervisionModel('gemini-4-hydrogen'); }} className={`py-1.5 rounded-lg font-bold transition-all ${supervisionProvider === 'gemini' && (supervisionModel === 'gemini-4-hydrogen' || supervisionModel === 'hydrogen') ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:text-blue-600'}`}>4 Hydrogen</button>
-                        <button onClick={() => { setSupervisionProvider('gemini'); setSupervisionModel('flash'); }} className={`py-1.5 rounded-lg font-bold transition-all ${supervisionProvider === 'gemini' && (supervisionModel === 'flash' || supervisionModel === 'gemini-3.8-flash') ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:text-blue-600'}`}>3.8 Flash</button>
+                        <button onClick={() => { setSupervisionProvider('gemini'); setSupervisionModel('gemini-3.8-flash'); }} className={`py-1.5 rounded-lg font-bold transition-all ${supervisionProvider === 'gemini' && (supervisionModel === 'flash' || supervisionModel === 'gemini-3.8-flash') ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:text-blue-600'}`}>3.8 Flash</button>
                         <button onClick={() => { setSupervisionProvider('gemini'); setSupervisionModel('gemini-3.6-flash'); }} className={`py-1.5 rounded-lg font-bold transition-all ${supervisionProvider === 'gemini' && supervisionModel === 'gemini-3.6-flash' ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:text-blue-600'}`}>3.6 Flash</button>
                       </div>
                     </div>
                     <div>
                       <div className="text-[9px] font-bold text-slate-400 uppercase py-0.5 px-1">Lourd (API facturée)</div>
-                      <button onClick={() => { setSupervisionProvider('gemini'); setSupervisionModel('pro'); }} className={`w-full py-1.5 rounded-lg font-bold transition-all ${supervisionProvider === 'gemini' && (supervisionModel === 'pro' || supervisionModel === 'gemini-4-argon' || supervisionModel === 'argon') ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:text-blue-600'}`}>4 Argon (approfondi)</button>
+                      <button onClick={() => { setSupervisionProvider('gemini'); setSupervisionModel('pro'); }} className={`w-full py-1.5 rounded-lg font-bold transition-all ${supervisionProvider === 'gemini' && (supervisionModel === 'pro' || supervisionModel === 'gemini-4-neon' || supervisionModel === 'neon' || supervisionModel === 'gemini-4-argon' || supervisionModel === 'argon') ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:text-blue-600'}`}>4 Neon (approfondi)</button>
                     </div>
                   </div>
                 </div>

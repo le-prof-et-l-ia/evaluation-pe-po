@@ -21,6 +21,7 @@ import {
   cleanEvalForPrompt,
   safeParseJson,
   getCriteriaKeys,
+  getOcrPrompt,
 } from './promptUtils';
 import { parseMultiplePEMarkdowns } from './markdownGenerator';
 import { getFriendlyModelName } from './modelNames';
@@ -564,6 +565,7 @@ export function buildExternalInitialMarkdown(
   const ids = tasks.map(t => JSON.stringify(t.fileId)).join(', ');
   const examTitle = `DELF ${config.level}`;
   const criteriaKeys = getCriteriaKeys(config.level).join(', ');
+  const needsTranscription = tasks.some(t => !t.transcription || !t.transcription.trim());
 
   const langInstruction = config.language === 'VN'
     ? '⚠️ LANGUE DU RAPPORT : VIETNAMIEN (tiếng Việt có dấu). TOUTES les sections textuelles (justifications, advices, brouillons, errorsTable.rule) doivent être en vietnamien. Il est STRICTEMENT INTERDIT de rédiger en français.'
@@ -575,11 +577,25 @@ export function buildExternalInitialMarkdown(
     ? '⚠️ LANGUE DU RAPPORT : TCHÈQUE (čeština). Všechny textové části musí být v češtině.'
     : '⚠️ LANGUE DU RAPPORT : FRANÇAIS (avec tous les accents).';
 
-  const header = `# Évaluation initiale externe ${examTitle}
+  const ocrSection = needsTranscription
+    ? `
+## 📷 Étape 1 — Transcription OCR préalable de la copie (Accélération GPU locale prioritaire)
+Pour toute copie dont la transcription n'est pas fournie ci-dessous, tu dois **d'abord transcrire fidèlement l'image ou le PDF joint(e)** par l'utilisateur avant de procéder à l'évaluation, puis placer cette transcription intégrale dans le champ \`"transcription"\` de l'objet \`"evaluation"\` (ainsi que \`"studentName"\` et \`"studentEmail"\` s'ils figurent sur la copie).
+
+⚡ **PRIORITÉ À L'ACCÉLÉRATION MATÉRIELLE (CARTE GRAPHIQUE / GPU LOCAL)** :
+- Si tu disposes d'un accès aux outils locaux de l'ordinateur (agent local, Claude Desktop avec MCP, terminal, Python), **privilégie impérativement une reconnaissance OCR locale accélérée par la carte graphique (GPU CUDA / TensorRT / DirectML / Apple Metal)** si l'ordinateur en est équipé, afin que la transcription soit beaucoup plus rapide.
+- Si tu fonctionnes dans une interface web ou sans GPU local accessible, utilise directement ta capacité de vision multimodale native sur l'image ou le PDF joint(e).
+
+### Consignes de transcription OCR à respecter scrupuleusement :
+${getOcrPrompt(config.level, config.nativeLanguage)}
+`
+    : '';
+
+  const header = `# Évaluation initiale externe ${examTitle}${needsTranscription ? ' (Transcription OCR + Évaluation en une seule passe)' : ''}
 ${langInstruction}
 
  
-Tu joues le rôle de l'EXAMINATEUR INITIAL. Tu dois évaluer **chacune des ${tasks.length} copie(s)** listée(s) plus bas en appliquant la GRILLE ET RÈGLES DE NOTATION (section suivante).
+Tu joues le rôle de l'EXAMINATEUR INITIAL. Tu dois ${needsTranscription ? '**transcrire** (si le texte de la copie n\'est pas déjà fourni) puis **évaluer**' : 'évaluer'} **chacune des ${tasks.length} copie(s)** listée(s) plus bas en appliquant la GRILLE ET RÈGLES DE NOTATION (section suivante).
  
 ## Format de sortie STRICT
 Réponds **uniquement** par un unique tableau JSON valide, sans texte autour :
@@ -592,13 +608,17 @@ Réponds **uniquement** par un unique tableau JSON valide, sans texte autour :
  
 - Un objet par copie, avec le \`fileId\` recopié à l'identique (valeurs attendues : ${ids}).
 - Le champ \`evaluation\` doit respecter le schéma JSON : \`studentEmail\`, \`studentName\`, \`transcription\`, \`brouillon_phase1_audit\`, \`brouillon_phase2_analyse\`, \`globalScore\`, \`criteriaScores\` {${criteriaKeys}}, \`justifications\` {${criteriaKeys}}, \`advices\` {${criteriaKeys}}, \`errorsTable\` [ { original, correction, rule } ].
- 
-## Grille et règles de notation
+${ocrSection}
+## ${needsTranscription ? '⚖️ Étape 2 — ' : ''}Grille et règles de notation
 ${gridPrompt}
 `;
 
   const blocks = tasks.map((task, i) => {
-    const userPrompt = buildEvalUserPrompt(task.subject, task.transcription, config.language);
+    const hasTranscription = Boolean(task.transcription && task.transcription.trim());
+    const effectiveTranscription = hasTranscription
+      ? task.transcription
+      : "[À TRANSCRIRE DEPUIS L'IMAGE OU LE PDF JOINT(E) — Transcris d'abord la copie manuscrite en suivant les consignes de l'Étape 1 (en utilisant en priorité le GPU de l'ordinateur s'il en est équipé, sinon ta vision multimodale), place la transcription exacte dans le champ \"transcription\" du JSON (ainsi que \"studentName\" et \"studentEmail\" s'ils sont visibles), puis évalue cette transcription selon la grille ci-dessus.]";
+    const userPrompt = buildEvalUserPrompt(task.subject, effectiveTranscription, config.language);
     return `---
  
 ## Copie ${i + 1} — fileId : \`${task.fileId}\`
@@ -619,6 +639,6 @@ export function finalizeExternalInitial(
   }
   const cleaned = sanitizeHallucinations(rawEval as CorrectionResult);
   const result = sanitizeScores(cleaned, gradingMode, level);
-  result.transcription = transcription || result.transcription || '';
+  result.transcription = (transcription || '').trim() || result.transcription || '';
   return result;
 }

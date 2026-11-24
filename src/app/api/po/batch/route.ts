@@ -137,7 +137,7 @@ export async function POST(req: Request) {
             const isInterpretation = examType === 'interpretation';
 
             if (ocrOnly) {
-              const ocrResOnly = await extractText(base64Data, mimeType, level || 'B2', ocrModel || 'gemini-3.8-flash', ocrApiKeys?.gemini, onKeySelected, nativeLanguage);
+              const ocrResOnly = await extractText(base64Data, mimeType, level || 'B2', ocrModel || 'gemini-4-hydrogen', ocrApiKeys?.gemini, onKeySelected, nativeLanguage);
               transcription = ocrResOnly.text;
               evaluationResult = { transcription, isOcrOnly: true, examType };
             } else {
@@ -147,7 +147,7 @@ export async function POST(req: Request) {
 
               // OCR step
               let ocrFallbackNotice: string | undefined;
-              const ocrRes = await extractText(base64Data, mimeType, level || 'B2', ocrModel || 'gemini-3.8-flash', ocrApiKeys?.gemini, onKeySelected, nativeLanguage);
+              const ocrRes = await extractText(base64Data, mimeType, level || 'B2', ocrModel || 'gemini-4-hydrogen', ocrApiKeys?.gemini, onKeySelected, nativeLanguage);
               transcription = ocrRes.text;
               if (ocrRes.fallbackNotice) {
                 ocrFallbackNotice = ocrRes.fallbackNotice;
@@ -164,7 +164,7 @@ export async function POST(req: Request) {
                   targetLanguage || 'Français',
                   criteria,
                   customInstructions,
-                  evalModel || 'flash',
+                  evalModel || 'gemini-4-hydrogen',
                   apiKeys?.gemini,
                   onKeySelected
                 );
@@ -175,9 +175,9 @@ export async function POST(req: Request) {
                   { text: transcription }, 
                   language || 'FR', 
                   0.3, 
-                  evalModel || 'flash', 
+                  evalModel || 'gemini-4-hydrogen', 
                   level || 'B2', 
-                  'flash', 
+                  'gemini-4-hydrogen', 
                   apiKeys?.gemini, 
                   onKeySelected, 
                   false,

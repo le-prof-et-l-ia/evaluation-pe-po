@@ -12,11 +12,12 @@
  * Le DELF (PE et PO) y figure aussi, avec ses fonctions existantes.
  */
 import type { CustomCriterion, DictationPenaltyConfig } from '../customExamTypes';
-import { buildDictationSystemPrompt } from '../dicteeEngine';
+import { buildDictationSystemPrompt, getDictationOcrPrompt } from '../dicteeEngine';
 import { buildTranslationSystemPrompt } from '../traductionEngine';
 import { buildGrammarSystemPrompt } from '../grammaireEngine';
 import { buildCompositionSystemPrompt, getCompositionTypeLabel, type CompositionSubType } from '../compositionEngine';
-import { buildInterpretationSystemPrompt } from '../po/interpretationEngine';
+import { buildInterpretationSystemPrompt, getInterpretationTranscriptionPrompt } from '../po/interpretationEngine';
+import { getOcrPrompt } from '../promptUtils';
 import {
   buildExternalInitialMarkdown as buildDelfPEMarkdown,
   finalizeExternalInitial as finalizeDelfPE,
@@ -151,10 +152,32 @@ const listeCles = (criteres: { key: string; maxScore: number }[]) =>
 /** Générateur commun aux épreuves hors DELF : consignes une fois, puis un bloc par copie. */
 function genererConsignesGeneriques(e: EpreuveRegistre, taches: TacheExterne[], ctx: ContexteEpreuve): string {
   const ids = taches.map(t => JSON.stringify(t.fileId)).join(', ');
-  const entete = `# Évaluation externe — ${e.libelle}
+  const sansTranscription = taches.some(t => !texte(t.transcription));
+  const estOral = e.section === 'po';
+  const consignesTranscription = e.id === 'dictee'
+    ? getDictationOcrPrompt()
+    : estOral
+    ? getInterpretationTranscriptionPrompt()
+    : getOcrPrompt('B2');
 
-Tu joues le rôle de l'EXAMINATEUR. Tu dois évaluer **chacune des ${taches.length} copie(s)** listée(s) plus bas, en appliquant les CONSIGNES DE CORRECTION et les DOCUMENTS DE RÉFÉRENCE ci-dessous (communs à toutes les copies).
-${e.avertissement ? `\n⚠️ ${e.avertissement}\n` : ''}
+  const sectionTranscription = sansTranscription
+    ? `
+## ${estOral ? '🎙️' : '📷'} Étape 1 — Transcription préalable ${estOral ? "de l'enregistrement audio" : 'OCR de la copie'} (Accélération GPU locale prioritaire)
+Pour toute copie dont la transcription n'est pas fournie ci-dessous, tu dois **d'abord transcrire fidèlement ${estOral ? 'le fichier audio joint' : "l'image ou le PDF joint(e)"}** par l'utilisateur avant de procéder à l'évaluation, puis placer cette transcription intégrale dans le champ \`"transcription"\` de l'objet \`"evaluation"\` (ainsi que \`"studentName"\` et \`"studentEmail"\` s'ils sont mentionnés).
+
+⚡ **PRIORITÉ À L'ACCÉLÉRATION MATÉRIELLE (CARTE GRAPHIQUE / GPU LOCAL)** :
+- Si tu disposes d'un accès aux outils locaux de l'ordinateur (agent local, Claude Desktop avec MCP, terminal, Python), **privilégie impérativement une ${estOral ? 'transcription audio locale accélérée par la carte graphique (GPU CUDA / TensorRT / Apple Metal, ex. Whisper ou faster-whisper sur GPU)' : 'reconnaissance OCR locale accélérée par la carte graphique (GPU CUDA / TensorRT / DirectML / Apple Metal)'}** si l'ordinateur en est équipé, afin que la transcription soit beaucoup plus rapide.
+- Si tu fonctionnes dans une interface web ou sans GPU local accessible, utilise directement ta capacité ${estOral ? "d'écoute multimodale" : 'de vision multimodale'} native sur le fichier joint.
+
+### Consignes de transcription à respecter scrupuleusement :
+${consignesTranscription}
+`
+    : '';
+
+  const entete = `# Évaluation externe — ${e.libelle}${sansTranscription ? ` (Transcription ${estOral ? 'Audio' : 'OCR'} + Évaluation en une seule passe)` : ''}
+
+Tu joues le rôle de l'EXAMINATEUR. Tu dois ${sansTranscription ? '**transcrire** (si le texte de la copie n\'est pas déjà fourni) puis **évaluer**' : 'évaluer'} **chacune des ${taches.length} copie(s)** listée(s) plus bas, en appliquant les CONSIGNES DE CORRECTION et les DOCUMENTS DE RÉFÉRENCE ci-dessous (communs à toutes les copies).
+${e.avertissement && !sansTranscription ? `\n⚠️ ${e.avertissement}\n` : ''}
 ## Format de sortie STRICT
 Réponds **uniquement** par un unique tableau JSON valide, sans texte autour :
 
@@ -165,19 +188,26 @@ Réponds **uniquement** par un unique tableau JSON valide, sans texte autour :
 \`\`\`
 
 - Un objet par copie, avec le \`fileId\` recopié à l'identique (valeurs attendues : ${ids}).
-- Le champ \`evaluation\` respecte EXACTEMENT le « FORMAT DE SORTIE JSON STRICT ATTENDU » des consignes de correction : ${e.formatEvaluation(ctx)}
+- Le champ \`evaluation\` respecte EXACTEMENT le « FORMAT DE SORTIE JSON STRICT ATTENDU » des consignes de correction : ${e.formatEvaluation(ctx)}${sansTranscription ? ' Ajoute également dans `evaluation` le champ `"transcription"` contenant la transcription intégrale que tu as établie à l\'Étape 1 (ainsi que `"studentName"` et `"studentEmail"` s\'ils sont visibles).' : ''}
 - La note finale est recalculée par l'application à partir de ta réponse : respecte le barème indiqué, sans le dépasser.
-
-## Consignes de correction
+${sectionTranscription}
+## ${sansTranscription ? '⚖️ Étape 2 — ' : ''}Consignes de correction
 ${e.consignesCorrection(ctx)}
 
 ## Documents de référence (communs à toutes les copies)
 ${e.documentsReference(ctx) || '(aucun)'}`;
 
-  const blocs = taches.map((t, i) => `---
+  const blocs = taches.map((t, i) => {
+    const tr = texte(t.transcription)
+      ? t.transcription
+      : estOral
+      ? "[À TRANSCRIRE DEPUIS LE FICHIER AUDIO JOINT — Transcris d'abord l'enregistrement audio en suivant les consignes de l'Étape 1 (en utilisant en priorité le GPU de l'ordinateur s'il en est équipé, sinon ton écoute multimodale), place la transcription exacte dans le champ \"transcription\" de l'objet \"evaluation\", puis évalue cette restitution selon les consignes de l'Étape 2.]"
+      : "[À TRANSCRIRE DEPUIS L'IMAGE OU LE PDF JOINT(E) — Transcris d'abord la copie en suivant les consignes de l'Étape 1 (en utilisant en priorité le GPU de l'ordinateur s'il en est équipé, sinon ta vision multimodale), place la transcription exacte dans le champ \"transcription\" de l'objet \"evaluation\" (ainsi que \"studentName\" et \"studentEmail\" s'ils figurent sur la copie), puis évalue cette copie selon les consignes de l'Étape 2.]";
+    return `---
 
 ## Copie ${i + 1} — fileId : \`${t.fileId}\`
-${e.blocCopie(t.transcription)}`);
+${e.blocCopie(tr)}`;
+  });
 
   const fin = `---
 

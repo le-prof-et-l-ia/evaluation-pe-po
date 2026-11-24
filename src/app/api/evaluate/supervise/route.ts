@@ -23,7 +23,7 @@ export async function POST(req: Request) {
 
     const supervisedResult: any = await superviseEvaluation(
       result, text, subject, language || 'FR', temperature || 0.3,
-      supervisionModel || 'flash', level || 'B2', apiKeys?.gemini, undefined, gradingMode
+      supervisionModel || 'gemini-4-hydrogen', level || 'B2', apiKeys?.gemini, undefined, gradingMode
     );
 
     if (supervisedResult._comparison) {

@@ -735,10 +735,12 @@ export default function Home() {
     if (!estDelf(examType)) {
       const manque = obtenirEpreuve('po', examType)?.verifierConfig({ config: buildExamConfig() });
       if (manque) { alert(manque); return; }
-      const sansTexte = tasks.filter((t: any) => !(t.transcription || '').trim()).length;
-      if (sansTexte > 0) {
-        alert(`${sansTexte} prestation(s) sans transcription : l'IA externe ne peut pas écouter l'enregistrement. Collez ou corrigez la transcription à la main, ou faites-la produire par le dossier d'échange (« Préparer OCR externe »).`);
-        return;
+      if (context === 'batch') {
+        const sansTexte = tasks.filter((t: any) => !(t.transcription || '').trim()).length;
+        if (sansTexte > 0) {
+          alert(`${sansTexte} prestation(s) sans transcription : en mode Lot par copier-coller, l'IA externe ne reçoit que le texte. Collez ou corrigez la transcription à la main, ou faites-la produire par le dossier d'échange (« Préparer OCR externe »).`);
+          return;
+        }
       }
     }
     setExternalMode('initial');
@@ -934,14 +936,18 @@ export default function Home() {
           const appliedSubject = (final as any).subject || base?.subject || externalTasks[0]?.subject || subject || '';
           let appliedData: any;
           if (externalMode === 'initial') {
+            const resolvedTranscription = (text || '').trim() || final.transcription || '';
             appliedData = {
               ...final,
               id: (base as any)?.id || final.id,
               studentName: base?.studentName ?? final.studentName,
               studentEmail: base?.studentEmail ?? final.studentEmail,
-              transcription: text || final.transcription || '',
+              transcription: resolvedTranscription,
               subject: appliedSubject,
             };
+            if (!text.trim() && resolvedTranscription) {
+              setText(resolvedTranscription);
+            }
           } else {
             appliedData = {
               ...final,
@@ -2837,13 +2843,13 @@ ${transcriptionPart2}
                           <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider px-1 mb-1">Léger (API gratuite)</div>
                           <div className="grid grid-cols-3 gap-1">
                             <button onClick={() => setEvalModel('gemini-4-hydrogen')} className={`py-1.5 rounded-lg font-bold transition-all ${evalModel === 'gemini-4-hydrogen' || evalModel === 'hydrogen' ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 hover:text-blue-600 border border-slate-200'}`}>4 Hydrogen</button>
-                            <button onClick={() => setEvalModel('flash')} className={`py-1.5 rounded-lg font-bold transition-all ${evalModel === 'flash' || evalModel === 'gemini-3.8-flash' ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 hover:text-blue-600 border border-slate-200'}`}>3.8 Flash</button>
+                            <button onClick={() => setEvalModel('gemini-3.8-flash')} className={`py-1.5 rounded-lg font-bold transition-all ${evalModel === 'flash' || evalModel === 'gemini-3.8-flash' ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 hover:text-blue-600 border border-slate-200'}`}>3.8 Flash</button>
                             <button onClick={() => setEvalModel('gemini-3.6-flash')} className={`py-1.5 rounded-lg font-bold transition-all ${evalModel === 'gemini-3.6-flash' ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 hover:text-blue-600 border border-slate-200'}`}>3.6 Flash</button>
                           </div>
                         </div>
                         <div>
                           <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider px-1 mb-1">Lourd (API facturée)</div>
-                          <button onClick={() => setEvalModel('pro')} className={`w-full py-1.5 rounded-lg font-bold transition-all ${evalModel === 'pro' || evalModel === 'gemini-4-argon' || evalModel === 'argon' ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 hover:text-blue-600 border border-slate-200'}`}>4 Argon</button>
+                          <button onClick={() => setEvalModel('pro')} className={`w-full py-1.5 rounded-lg font-bold transition-all ${evalModel === 'pro' || evalModel === 'gemini-4-neon' || evalModel === 'neon' || evalModel === 'gemini-4-argon' || evalModel === 'argon' ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 hover:text-blue-600 border border-slate-200'}`}>4 Neon</button>
                         </div>
                       </div>
                       <Aide cle="partage_modeleEvaluation" taille={14} className="mt-1.5" />
@@ -2878,13 +2884,13 @@ ${transcriptionPart2}
                                 <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider px-1 mb-1">Léger (API gratuite)</div>
                                 <div className="grid grid-cols-3 gap-1">
                                   <button onClick={() => { setSupervisionProvider('gemini'); setSupervisionModel('gemini-4-hydrogen'); }} className={`py-1 rounded-lg font-bold transition-all ${supervisionProvider === 'gemini' && (supervisionModel === 'gemini-4-hydrogen' || supervisionModel === 'hydrogen') ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:text-blue-600'}`}>4 Hydrogen</button>
-                                  <button onClick={() => { setSupervisionProvider('gemini'); setSupervisionModel('flash'); }} className={`py-1 rounded-lg font-bold transition-all ${supervisionProvider === 'gemini' && (supervisionModel === 'flash' || supervisionModel === 'gemini-3.8-flash') ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:text-blue-600'}`}>3.8 Flash</button>
+                                  <button onClick={() => { setSupervisionProvider('gemini'); setSupervisionModel('gemini-3.8-flash'); }} className={`py-1 rounded-lg font-bold transition-all ${supervisionProvider === 'gemini' && (supervisionModel === 'flash' || supervisionModel === 'gemini-3.8-flash') ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:text-blue-600'}`}>3.8 Flash</button>
                                   <button onClick={() => { setSupervisionProvider('gemini'); setSupervisionModel('gemini-3.6-flash'); }} className={`py-1 rounded-lg font-bold transition-all ${supervisionProvider === 'gemini' && supervisionModel === 'gemini-3.6-flash' ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:text-blue-600'}`}>3.6 Flash</button>
                                 </div>
                               </div>
                               <div>
                                 <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider px-1 mb-1">Lourd (API facturée)</div>
-                                <button onClick={() => { setSupervisionProvider('gemini'); setSupervisionModel('pro'); }} className={`w-full py-1 rounded-lg font-bold transition-all ${supervisionProvider === 'gemini' && (supervisionModel === 'pro' || supervisionModel === 'gemini-4-argon' || supervisionModel === 'argon') ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:text-blue-600'}`}>4 Argon</button>
+                                <button onClick={() => { setSupervisionProvider('gemini'); setSupervisionModel('pro'); }} className={`w-full py-1 rounded-lg font-bold transition-all ${supervisionProvider === 'gemini' && (supervisionModel === 'pro' || supervisionModel === 'gemini-4-neon' || supervisionModel === 'neon' || supervisionModel === 'gemini-4-argon' || supervisionModel === 'argon') ? 'bg-blue-600 text-white shadow-sm' : 'bg-white text-slate-500 border border-slate-200 hover:text-blue-600'}`}>4 Neon</button>
                               </div>
                             </div>
                           </div>
@@ -3192,8 +3198,7 @@ ${transcriptionPart2}
                   <button
                     onClick={() => {
                       if (!externalEvalSupported) return alert(EXTERNAL_UNSUPPORTED_MSG);
-                      if (estDelf(examType) && (!subject || !text)) return alert("Veuillez remplir le sujet et la transcription.");
-                      if (!estDelf(examType) && !text.trim()) return alert(`Collez ou corrigez la transcription de la prestation dans la zone de texte : l'IA externe ne peut pas écouter l'enregistrement.\n\n${AVERTISSEMENT_INTERPRETATION}`);
+                      if (estDelf(examType) && !subject.trim()) return alert("Veuillez remplir le sujet avant de lancer l'évaluation externe.");
                       openExternalInitial('single', [{
                         fileId: 'single',
                         subject: estDelf(examType) ? subject : 'Interprétation',
@@ -3202,7 +3207,7 @@ ${transcriptionPart2}
                       }]);
                     }}
                     className="flex items-center gap-2 px-6 py-4 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-2xl font-bold transition-all border border-amber-200 shadow-sm hover:shadow active:scale-95"
-                    title="Procéder à l'évaluation initiale externe (sans clé API)"
+                    title="Procéder à l'évaluation initiale externe (sans clé API) — avec ou sans transcription préalable"
                   >
                     <Brain className="w-5 h-5 text-amber-600" /> Éval. externe
                   </button>
@@ -4603,7 +4608,7 @@ ${transcriptionPart2}
           <ExternalSupervisionModal
             mode={externalMode}
             tasks={externalTasks}
-            config={{ level, language, notationType }}
+            config={{ level, language, notationType, nativeLanguage }}
             examType={examType}
             examConfig={estDelf(examType) ? undefined : buildExamConfig()}
             firstProviderLabel={getFriendlyModelName(evalModel)}

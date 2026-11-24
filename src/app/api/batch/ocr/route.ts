@@ -26,7 +26,7 @@ export async function POST(req: Request) {
     else if (ext === '.jpg' || ext === '.jpeg') mimeType = 'image/jpeg';
     else if (ext === '.png') mimeType = 'image/png';
 
-    const ocrResult = await extractText(base64Data, mimeType, level || 'B2', ocrModel || 'gemini-3.8-flash', apiKeys?.gemini, undefined, nativeLanguage);
+    const ocrResult = await extractText(base64Data, mimeType, level || 'B2', ocrModel || 'gemini-4-hydrogen', apiKeys?.gemini, undefined, nativeLanguage);
 
     return new Response(JSON.stringify({ 
       text: ocrResult.transcription,

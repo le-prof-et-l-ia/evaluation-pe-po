@@ -43,7 +43,7 @@ export async function POST(req: Request) {
       else if (ext === '.png') mimeType = 'image/png';
 
       // OCR always via Gemini for retry with file
-      const ocrResult = await extractText(base64Data, mimeType, level || 'B2', 'flash', apiKeys?.gemini, undefined, nativeLanguage);
+      const ocrResult = await extractText(base64Data, mimeType, level || 'B2', 'gemini-4-hydrogen', apiKeys?.gemini, undefined, nativeLanguage);
       studentText = ocrResult.transcription;
       ocrName = ocrResult.studentName;
       ocrEmail = ocrResult.studentEmail;
@@ -80,7 +80,7 @@ export async function POST(req: Request) {
           customConfig?.maxScore || 10,
           customConfig?.dictationPenalties,
           customConfig?.customInstructions,
-          evalModel || 'flash',
+          evalModel || 'gemini-4-hydrogen',
           apiKeys?.gemini
         );
       } else if (isTrad) {
@@ -93,7 +93,7 @@ export async function POST(req: Request) {
           customConfig?.sourceLanguage || 'Français',
           customConfig?.targetLanguage || 'Français',
           customConfig?.criteria,
-          evalModel || 'flash',
+          evalModel || 'gemini-4-hydrogen',
           apiKeys?.gemini
         );
       } else if (isGramm) {
@@ -103,7 +103,7 @@ export async function POST(req: Request) {
           customConfig?.maxScore || 10,
           customConfig?.modelTranslation,
           customConfig?.customInstructions,
-          evalModel || 'flash',
+          evalModel || 'gemini-4-hydrogen',
           apiKeys?.gemini
         );
       } else if (isComposition) {
@@ -116,7 +116,7 @@ export async function POST(req: Request) {
           customConfig?.targetLanguage || 'Français',
           customConfig?.customInstructions,
           customConfig?.criteria,
-          evalModel || 'flash',
+          evalModel || 'gemini-4-hydrogen',
           apiKeys?.gemini,
           undefined,
           customConfig?.disableStandardGrid
@@ -127,9 +127,9 @@ export async function POST(req: Request) {
           { text: studentText }, 
           language || 'VN', 
           0.3, 
-          evalModel || 'flash', 
+          evalModel || 'gemini-4-hydrogen', 
           level || 'B2', 
-          'flash', 
+          'gemini-4-hydrogen', 
           apiKeys?.gemini, 
           undefined, 
           false, 

@@ -71,8 +71,8 @@ const AIDE_GENERAL = {
     titre: "Évaluation externe (sans clé API)",
     texte: [
       "Fait corriger cette copie par une IA externe (Claude, ChatGPT…) au lieu de Gemini. Aucune clé API n'est nécessaire.",
-      "Avant de cliquer : remplissez le sujet et le texte à évaluer (texte de la copie ou transcription de l'enregistrement, tapé, collé ou obtenu automatiquement).",
-      "Une fenêtre s'ouvre en deux étapes : 1) copiez ou téléchargez les consignes et donnez-les à l'IA ; 2) collez sa réponse dans la fenêtre. Le bilan s'affiche alors comme une correction normale.",
+      "Avant de cliquer : remplissez le sujet (ou les textes de référence de l'épreuve). Vous pouvez soit renseigner le texte de la copie / la transcription, soit laisser la zone vide : dans ce cas, le prompt généré demandera à l'IA externe de réaliser à la fois la transcription (en priorisant l'accélération GPU locale de l'ordinateur si disponible) et l'évaluation en une seule fois.",
+      "Une fenêtre s'ouvre en deux étapes : 1) copiez ou téléchargez les consignes et donnez-les à l'IA (avec l'image, le PDF ou l'audio si la zone de texte était vide) ; 2) collez sa réponse dans la fenêtre. La transcription et le bilan s'affichent alors simultanément.",
       "Disponible pour toutes les épreuves : les consignes données à l'IA sont celles de la correction interne de l'épreuve. La note n'est jamais reprise de l'IA : l'application la recalcule avec le barème de l'épreuve.",
     ],
   },

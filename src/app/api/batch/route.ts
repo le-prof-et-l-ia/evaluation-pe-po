@@ -125,7 +125,7 @@ export async function POST(req: Request) {
 
             if (ocrOnly) {
               // OCR only (Gemini)
-              const ocrResult = await extractText(base64Data, mimeType, level || 'B2', ocrModel || 'gemini-3.8-flash', ocrApiKeys?.gemini, onKeySelected, nativeLanguage, ocrPrompt);
+              const ocrResult = await extractText(base64Data, mimeType, level || 'B2', ocrModel || 'gemini-4-hydrogen', ocrApiKeys?.gemini, onKeySelected, nativeLanguage, ocrPrompt);
               transcription = ocrResult.transcription;
               detectedName = ocrResult.studentName;
               ocrAlerts = ocrResult.ocrAlerts || [];
@@ -136,7 +136,7 @@ export async function POST(req: Request) {
               const subjectStr = subject || `Sujet standard ${level || 'B2'} ou détecter depuis la copie`;
 
               // OCR step (Gemini)
-              const ocrResult = await extractText(base64Data, mimeType, level || 'B2', ocrModel || 'gemini-3.8-flash', ocrApiKeys?.gemini, onKeySelected, nativeLanguage, ocrPrompt);
+              const ocrResult = await extractText(base64Data, mimeType, level || 'B2', ocrModel || 'gemini-4-hydrogen', ocrApiKeys?.gemini, onKeySelected, nativeLanguage, ocrPrompt);
               transcription = ocrResult.transcription;
               detectedName = ocrResult.studentName;
               detectedEmail = ocrResult.studentEmail;
@@ -149,7 +149,7 @@ export async function POST(req: Request) {
                   customConfig?.maxScore || 10,
                   customConfig?.dictationPenalties,
                   customConfig?.customInstructions,
-                  evalModel || 'flash',
+                  evalModel || 'gemini-4-hydrogen',
                   apiKeys?.gemini,
                   onKeySelected
                 );
@@ -163,7 +163,7 @@ export async function POST(req: Request) {
                   customConfig?.sourceLanguage || 'Français',
                   customConfig?.targetLanguage || 'Français',
                   customConfig?.criteria,
-                  evalModel || 'flash',
+                  evalModel || 'gemini-4-hydrogen',
                   apiKeys?.gemini,
                   onKeySelected
                 );
@@ -174,7 +174,7 @@ export async function POST(req: Request) {
                   customConfig?.maxScore || 10,
                   customConfig?.modelTranslation,
                   customConfig?.customInstructions,
-                  evalModel || 'flash',
+                  evalModel || 'gemini-4-hydrogen',
                   apiKeys?.gemini,
                   onKeySelected
                 );
@@ -188,14 +188,14 @@ export async function POST(req: Request) {
                   customConfig?.targetLanguage || 'Français',
                   customConfig?.customInstructions,
                   customConfig?.criteria,
-                  evalModel || 'flash',
+                  evalModel || 'gemini-4-hydrogen',
                   apiKeys?.gemini,
                   onKeySelected,
                   customConfig?.disableStandardGrid
                 );
               } else {
                 // Primary evaluation (Gemini standard DELF)
-                evaluationResult = await evaluateProduction(subjectStr, { text: transcription }, language || 'VN', 0.3, evalModel || 'flash', level || 'B2', 'flash', apiKeys?.gemini, onKeySelected, false, gradingMode, nativeLanguage);
+                evaluationResult = await evaluateProduction(subjectStr, { text: transcription }, language || 'VN', 0.3, evalModel || 'gemini-4-hydrogen', level || 'B2', 'gemini-4-hydrogen', apiKeys?.gemini, onKeySelected, false, gradingMode, nativeLanguage);
               }
 
               if (ocrResult.fallbackNotice && !evaluationResult.fallbackNotice) {

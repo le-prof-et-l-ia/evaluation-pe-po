@@ -33,7 +33,7 @@ async function withRetryAndFallback(
 export const GEMINI_FLASH_FALLBACK_CHAIN = ['gemini-4-hydrogen', 'gemini-3.8-flash', 'gemini-3.6-flash'];
 
 export function resolveGeminiModel(modelInput?: string): string {
-  if (!modelInput) return 'gemini-3.8-flash';
+  if (!modelInput) return 'gemini-4-hydrogen';
   const m = modelInput.toLowerCase();
   if (m === 'hydrogen' || m.includes('4-hydrogen') || m === 'models/gemini-4-hydrogen') {
     return 'gemini-4-hydrogen';
@@ -45,7 +45,7 @@ export function resolveGeminiModel(modelInput?: string): string {
   // Redirection des versions dépréciées (3.7 / 3.5) vers 3.8 Flash
   if (m.includes('3.7-flash') || m.includes('3.5-flash')) return 'gemini-3.8-flash';
   if (m.includes('flash')) return 'gemini-3.8-flash';
-  if (m === 'argon' || m.includes('argon') || m === 'pro' || m.includes('pro') || m.includes('3.1-pro')) return 'gemini-4-argon';
+  if (m === 'neon' || m.includes('neon') || m === 'argon' || m.includes('argon') || m === 'pro' || m.includes('pro') || m.includes('3.1-pro')) return 'gemini-4-neon';
   return modelInput;
 }
 
@@ -411,9 +411,9 @@ export async function evaluateProduction(
   content: { text?: string; fileUri?: string; mimeType?: string },
   language: string = 'FR',
   temperature: number = 0.15,
-  evalModel: string = 'flash',
+  evalModel: string = 'gemini-4-hydrogen',
   level: 'B1' | 'B2' | string = 'B2',
-  ocrModel: 'flash' | 'pro' = 'flash',
+  ocrModel: string = 'gemini-4-hydrogen',
   apiKeys?: KeyConfig,
   onKeySelected?: (info: { key: string, isCustom: boolean }) => void,
   useDoubleEval: boolean = false,
@@ -477,7 +477,7 @@ export async function superviseEvaluation(
   subject: string,
   language: string = 'FR',
   temperature: number = 0.15,
-  evalModel: 'flash' | 'pro' | string = 'flash',
+  evalModel: 'flash' | 'pro' | string = 'gemini-4-hydrogen',
   level: 'B1' | 'B2' | string = 'B2',
   apiKeys?: KeyConfig,
   onKeySelected?: (info: { key: string, isCustom: boolean }) => void,
@@ -595,7 +595,7 @@ export async function extractText(
   fileUri: string, 
   mimeType: string, 
   level: 'B1' | 'B2' | string = 'B2', 
-  ocrModel: string = 'gemini-3.8-flash', 
+  ocrModel: string = 'gemini-4-hydrogen', 
   apiKeys?: KeyConfig, 
   onKeySelected?: (info: { key: string, isCustom: boolean }) => void,
   nativeLanguage?: string
@@ -690,7 +690,7 @@ export async function generateB2Questions(
   onKeySelected?: (info: { key: string, isCustom: boolean }) => void
 ): Promise<string> {
   const prompt = buildGenerateQuestionsPrompt(subject, part1Transcription);
-  return runWithGeminiModelFallback('gemini-3.8-flash', async (activeModel, apiKey) => {
+  return runWithGeminiModelFallback('gemini-4-hydrogen', async (activeModel, apiKey) => {
     const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
       model: activeModel,
@@ -795,7 +795,7 @@ export async function arbitrateEvaluation(
   subject: string,
   language: string = 'FR',
   temperature: number = 0.15,
-  evalModel: 'flash' | 'pro' | string = 'flash',
+  evalModel: 'flash' | 'pro' | string = 'gemini-4-hydrogen',
   level: 'B1' | 'B2' | string = 'B2',
   apiKeys?: KeyConfig,
   onKeySelected?: (info: { key: string, isCustom: boolean }) => void,
@@ -854,7 +854,7 @@ export async function evaluateInterpretation(
   targetLang: string = "Français",
   criteria: CustomCriterion[] = DEFAULT_INTERPRETATION_CRITERIA,
   customInstructions?: string,
-  evalModel: string = 'flash',
+  evalModel: string = 'gemini-4-hydrogen',
   apiKeys?: KeyConfig,
   onKeySelected?: (info: { key: string, isCustom: boolean }) => void
 ) {

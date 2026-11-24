@@ -13,7 +13,7 @@ export function getFriendlyModelName(model: string, provider?: string): string {
   if (modelLower.includes('gemini-3.7-flash')) return 'Gemini 3.7 Flash';
   if (modelLower.includes('gemini-3.6-flash')) return 'Gemini 3.6 Flash';
   if (modelLower.includes('gemini-3.5-flash')) return 'Gemini 3.5 Flash';
-  if (modelLower.includes('gemini-4-argon') || modelLower.includes('argon') || modelLower.includes('gemini-3.1-pro') || modelLower.includes('gemini-3.5-pro') || modelLower.includes('3.1-pro') || modelLower === 'pro' || modelLower === 'gemini-pro') return 'Gemini 4 Argon';
+  if (modelLower.includes('gemini-4-neon') || modelLower.includes('neon') || modelLower.includes('gemini-4-argon') || modelLower.includes('argon') || modelLower.includes('gemini-3.1-pro') || modelLower.includes('gemini-3.5-pro') || modelLower.includes('3.1-pro') || modelLower === 'pro' || modelLower === 'gemini-pro') return 'Gemini 4 Neon';
 
   return model;
 }

@@ -134,8 +134,8 @@ export function useCorrectionSettings(section: 'pe' | 'po' = 'pe') {
   const nativeLanguageState = useNativeLanguage();
 
   // ── Modèles ───────────────────────────────────────────────────────────────
-  const [evalModel, setEvalModel] = usePersistentRawState<string>("delf_eval_model", "flash");
-  const [ocrModel, setOcrModel] = useState<string>("gemini-3.8-flash");
+  const [evalModel, setEvalModel] = usePersistentRawState<string>("delf_eval_model", "gemini-4-hydrogen");
+  const [ocrModel, setOcrModel] = useState<string>("gemini-4-hydrogen");
 
   // ── Double évaluation ─────────────────────────────────────────────────────
   const [useDoubleEval, setUseDoubleEval] = usePersistentBoolean("delf_use_double_eval", true);
@@ -144,7 +144,7 @@ export function useCorrectionSettings(section: 'pe' | 'po' = 'pe') {
     (raw) => raw === "internal" || raw === "external"
   );
   const [supervisionProvider, setSupervisionProvider] = usePersistentRawState<string>("delf_supervision_provider", "gemini");
-  const [supervisionModel, setSupervisionModel] = usePersistentRawState<string>("delf_supervision_model", "flash");
+  const [supervisionModel, setSupervisionModel] = usePersistentRawState<string>("delf_supervision_model", "gemini-4-hydrogen");
 
   // ── Clés API ──────────────────────────────────────────────────────────────
   const [apiKeys, setApiKeys] = usePersistentState<ApiKeysConfig>("delf_api_keys", DEFAULT_API_KEYS);
@@ -163,18 +163,21 @@ export function useCorrectionSettings(section: 'pe' | 'po' = 'pe') {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Nettoyage automatique des anciens fournisseurs supprimés (Claude, Mistral, OpenAI, DeepSeek)
+  // Nettoyage automatique des anciens fournisseurs supprimés (Claude, Mistral, OpenAI, DeepSeek) et migration du défaut vers 4 Hydrogen
   useEffect(() => {
     try {
       const allowedProviders = ["gemini"];
       const currentSupProv = localStorage.getItem("delf_supervision_provider");
+      const currentSupMod = localStorage.getItem("delf_supervision_model");
       if (currentSupProv && !allowedProviders.includes(currentSupProv)) {
         setSupervisionProvider("gemini");
-        setSupervisionModel("flash");
+        setSupervisionModel("gemini-4-hydrogen");
+      } else if (currentSupMod === "flash") {
+        setSupervisionModel("gemini-4-hydrogen");
       }
       const currentEval = localStorage.getItem("delf_eval_model");
-      if (currentEval && (currentEval.startsWith("mistral-") || currentEval.startsWith("claude-") || currentEval.startsWith("gpt-") || currentEval.startsWith("deepseek-"))) {
-        setEvalModel("flash");
+      if (currentEval === "flash" || (currentEval && (currentEval.startsWith("mistral-") || currentEval.startsWith("claude-") || currentEval.startsWith("gpt-") || currentEval.startsWith("deepseek-")))) {
+        setEvalModel("gemini-4-hydrogen");
       }
     } catch {
       /* stockage indisponible */

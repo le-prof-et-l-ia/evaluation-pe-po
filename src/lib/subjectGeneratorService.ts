@@ -750,7 +750,7 @@ Générez maintenant ${articleCount} article(s) déclencheur(s) au format JSON d
 
   // 1. Première passe de génération avec la chaîne de repli Gemini Flash
   const generationResult = await runWithGeminiModelFallback(
-    'gemini-3.8-flash',
+    'gemini-4-hydrogen',
     async (activeModel, activeKey) => {
       const ai = new GoogleGenAI({ apiKey: activeKey });
       const response = await generateContentSafe(ai, activeModel, {
@@ -814,7 +814,7 @@ ${currentBody}`;
 
       try {
         const adjustmentResult = await runWithGeminiModelFallback(
-          'gemini-3.8-flash',
+          'gemini-4-hydrogen',
           async (activeModel, activeKey) => {
             const ai = new GoogleGenAI({ apiKey: activeKey });
             const resp = await generateContentSafe(ai, activeModel, {
@@ -869,7 +869,7 @@ ${currentBody}`;
       publishedDate: sourceArticle.publishedDate,
       url: sourceArticle.originalUrl
     },
-    modelUsed: (generationResult as any).modelUsed || 'gemini-3.8-flash',
+    modelUsed: (generationResult as any).modelUsed || 'gemini-4-hydrogen',
     fallbackNotice: (generationResult as any).fallbackNotice
   };
 }
@@ -920,7 +920,7 @@ ${JSON.stringify(EXEMPLE_JSON_CE, null, 2)}`;
   const userPrompt = `Générez l'épreuve de Compréhension Écrite (${level}) avec ${questionCount} questions pour un total de ${totalPoints} points sur le thème « ${theme} », en respectant scrupuleusement la structure JSON demandée.`;
 
   const rawGeneration = await runWithGeminiModelFallback(
-    'gemini-3.8-flash',
+    'gemini-4-hydrogen',
     async (activeModel, activeKey) => {
       const ai = new GoogleGenAI({ apiKey: activeKey });
       const response = await generateContentSafe(ai, activeModel, {

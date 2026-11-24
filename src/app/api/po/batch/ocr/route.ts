@@ -39,7 +39,7 @@ export async function POST(req: Request) {
     const base64Data = fileBuffer.toString('base64');
     const mimeType = getMimeType(file);
 
-    const ocrResult = await extractText(base64Data, mimeType, level || 'B2', ocrModel || 'gemini-3.8-flash', apiKeys?.gemini, undefined, nativeLanguage);
+    const ocrResult = await extractText(base64Data, mimeType, level || 'B2', ocrModel || 'gemini-4-hydrogen', apiKeys?.gemini, undefined, nativeLanguage);
 
     if (!ocrResult.text || !ocrResult.text.trim()) {
       return new Response(JSON.stringify({ error: "La transcription retournée est vide. L'enregistrement ne semble contenir aucune parole audible." }), { status: 500, headers: { 'Content-Type': 'application/json' } });

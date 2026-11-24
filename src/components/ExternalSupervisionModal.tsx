@@ -205,6 +205,17 @@ export default function ExternalSupervisionModal({ mode = 'supervision', tasks, 
               : `${totalItems} copie(s) à superviser. L'IA externe reçoit la 1re évaluation, l'audite, la rectifie et produit l'évaluation finale d'autorité. La comparaison entre les deux évaluateurs reste consultable dans l'application.`}
           </p>
 
+          {isInitial && activeChunk.some(t => !(t.transcription || '').trim()) && (
+            <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-2xl p-4 text-xs space-y-1.5">
+              <p className="font-bold flex items-center gap-2 text-emerald-800">
+                📷 Mode Tout-en-un : Transcription OCR (GPU prioritaire) + Évaluation en une seule fois
+              </p>
+              <p>
+                Aucune transcription n&apos;ayant été saisie, le prompt ci-dessous intègre automatiquement les consignes de <strong>lecture OCR de la copie</strong> (avec priorité à l&apos;accélération GPU locale si l&apos;IA dispose d&apos;un outil OCR local sur carte graphique, sinon via sa vision multimodale) suivies de l&apos;<strong>évaluation complète</strong>. Joignez simplement l&apos;image ou le PDF de la copie à ce prompt dans l&apos;IA externe : lors de l&apos;import du JSON, la transcription et le bilan seront remplis simultanément.
+              </p>
+            </div>
+          )}
+
           {isInitial && epreuve?.avertissement && (
             <div className="flex items-start gap-2 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-xl p-3">
               <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" /> <span>{epreuve.avertissement}</span>

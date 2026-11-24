@@ -47,7 +47,7 @@ export async function POST(req: Request) {
     let studentText = text || (primaryResult && primaryResult.transcription) || '';
     if (!studentText && !primaryResult) {
       const { extractText } = await import('@/lib/po/geminiService');
-      const ocrResult = await extractText(base64Data, mimeType, level || 'B2', 'flash', apiKeys?.gemini, undefined, nativeLanguage);
+      const ocrResult = await extractText(base64Data, mimeType, level || 'B2', 'gemini-4-hydrogen', apiKeys?.gemini, undefined, nativeLanguage);
       studentText = ocrResult.text;
     }
 
@@ -72,7 +72,7 @@ export async function POST(req: Request) {
           targetLanguage || 'Français',
           criteria,
           customInstructions,
-          evalModel || 'flash',
+          evalModel || 'gemini-4-hydrogen',
           apiKeys?.gemini
         );
       } else {
@@ -81,9 +81,9 @@ export async function POST(req: Request) {
           { text: studentText },
           language || 'FR',
           0.3,
-          evalModel || 'flash',
+          evalModel || 'gemini-4-hydrogen',
           level || 'B2',
-          'flash',
+          'gemini-4-hydrogen',
           apiKeys?.gemini,
           undefined,
           false,

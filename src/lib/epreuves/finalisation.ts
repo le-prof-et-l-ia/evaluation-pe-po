@@ -141,6 +141,7 @@ export function finaliserDictee(brut: any, transcription: string, p: ParamsDicte
       type: (TYPES_FAUTE_DICTEE as readonly string[]).includes(e.type) ? e.type : 'usage',
     }));
   const scoreCalc = computeDictationScore(errors, p.penalties, p.maxScore);
+  const texteFinal = (transcription || '').trim() || (typeof brut?.transcription === 'string' ? brut.transcription.trim() : '');
 
   return {
     examType: 'dictee' as const,
@@ -149,11 +150,11 @@ export function finaliserDictee(brut: any, transcription: string, p: ParamsDicte
     penaltiesTotal: scoreCalc.penaltiesTotal,
     errors: scoreCalc.errorsProcessed,
     breakdown: scoreCalc.breakdown,
-    transcription,
+    transcription: texteFinal,
     referenceText: p.referenceText,
     feedback: typeof brut?.feedback === 'string' ? brut.feedback : '',
-    studentName: null as string | null,
-    studentEmail: null as string | null,
+    studentName: (typeof brut?.studentName === 'string' && brut.studentName.trim() ? brut.studentName.trim() : null) as string | null,
+    studentEmail: (typeof brut?.studentEmail === 'string' && brut.studentEmail.trim() ? brut.studentEmail.trim() : null) as string | null,
     errorsTable: scoreCalc.errorsProcessed.map(e => ({
       original: e.original,
       correction: e.correction,
@@ -183,6 +184,7 @@ export function finaliserGrammaire(brut: any, transcription: string, p: ParamsGr
       return { ...it, scoreAwarded: score };
     });
   const globalScore = computeGrammarGlobalScore(items, p.maxScore);
+  const texteFinal = (transcription || '').trim() || (typeof brut?.transcription === 'string' ? brut.transcription.trim() : '');
 
   return {
     examType: 'grammaire' as const,
@@ -191,11 +193,11 @@ export function finaliserGrammaire(brut: any, transcription: string, p: ParamsGr
     items,
     summaryFeedback: typeof brut?.summaryFeedback === 'string' ? brut.summaryFeedback : '',
     errorsTable: Array.isArray(brut?.errorsTable) ? brut.errorsTable : [],
-    transcription,
+    transcription: texteFinal,
     subject: p.exerciseSubject,
     answerKey: p.answerKey || '',
-    studentName: null as string | null,
-    studentEmail: null as string | null
+    studentName: (typeof brut?.studentName === 'string' && brut.studentName.trim() ? brut.studentName.trim() : null) as string | null,
+    studentEmail: (typeof brut?.studentEmail === 'string' && brut.studentEmail.trim() ? brut.studentEmail.trim() : null) as string | null
   };
 }
 
@@ -216,6 +218,7 @@ export function validerTraduction(brut: any, p: ParamsTraduction): string | null
 
 export function finaliserTraduction(brut: any, transcription: string, p: ParamsTraduction) {
   const { criteriaScores, globalScore } = noteDepuisCriteres(brut?.criteriaScores, criteresTraduction(p), p.maxScore);
+  const texteFinal = (transcription || '').trim() || (typeof brut?.transcription === 'string' ? brut.transcription.trim() : '');
 
   return {
     examType: 'traduction' as const,
@@ -226,11 +229,11 @@ export function finaliserTraduction(brut: any, transcription: string, p: ParamsT
     advices: brut?.advices || {},
     errorsTable: Array.isArray(brut?.errorsTable) ? brut.errorsTable : [],
     detailedErrors: Array.isArray(brut?.detailedErrors) ? brut.detailedErrors : [],
-    transcription,
+    transcription: texteFinal,
     sourceText: p.sourceText,
     modelTranslation: p.modelTranslation,
-    studentName: null as string | null,
-    studentEmail: null as string | null
+    studentName: (typeof brut?.studentName === 'string' && brut.studentName.trim() ? brut.studentName.trim() : null) as string | null,
+    studentEmail: (typeof brut?.studentEmail === 'string' && brut.studentEmail.trim() ? brut.studentEmail.trim() : null) as string | null
   };
 }
 
@@ -281,6 +284,7 @@ export function finaliserComposition(brut: any, transcription: string, p: Params
   const libresBornes = customCriteriaEvaluated.map((c: any) => (
     criteriaScores[c.key] !== undefined ? { ...c, score: criteriaScores[c.key] } : c
   ));
+  const texteFinal = (transcription || '').trim() || (typeof brut?.transcription === 'string' ? brut.transcription.trim() : '');
 
   return {
     examType: 'composition' as const,
@@ -295,12 +299,12 @@ export function finaliserComposition(brut: any, transcription: string, p: Params
     advices,
     generalFeedback: typeof brut?.generalFeedback === 'string' ? brut.generalFeedback : '',
     errorsTable: Array.isArray(brut?.errorsTable) ? brut.errorsTable : [],
-    transcription,
+    transcription: texteFinal,
     subject: p.subject,
     corpusText: p.corpusText,
     customInstructions: p.customInstructions,
-    studentName: null as string | null,
-    studentEmail: null as string | null
+    studentName: (typeof brut?.studentName === 'string' && brut.studentName.trim() ? brut.studentName.trim() : null) as string | null,
+    studentEmail: (typeof brut?.studentEmail === 'string' && brut.studentEmail.trim() ? brut.studentEmail.trim() : null) as string | null
   };
 }
 
@@ -312,6 +316,7 @@ export function validerInterpretation(brut: any, p: ParamsInterpretation): strin
 
 export function finaliserInterpretation(brut: any, transcription: string, p: ParamsInterpretation) {
   const { criteriaScores, globalScore } = noteDepuisCriteres(brut?.criteriaScores, criteresInterpretation(p), p.maxScore);
+  const texteFinal = (transcription || '').trim() || (typeof brut?.transcription === 'string' ? brut.transcription.trim() : '');
 
   return {
     examType: 'interpretation' as const,
@@ -322,12 +327,12 @@ export function finaliserInterpretation(brut: any, transcription: string, p: Par
     advices: brut?.advices || {},
     errorsTable: Array.isArray(brut?.errorsTable) ? brut.errorsTable : [],
     detailedErrors: Array.isArray(brut?.detailedErrors) ? brut.detailedErrors : [],
-    transcription,
+    transcription: texteFinal,
     sourceSpeech: p.sourceSpeech,
     mode: p.mode,
     sourceLanguage: p.sourceLang,
     targetLanguage: p.targetLang,
-    studentName: null as string | null,
-    studentEmail: null as string | null
+    studentName: (typeof brut?.studentName === 'string' && brut.studentName.trim() ? brut.studentName.trim() : null) as string | null,
+    studentEmail: (typeof brut?.studentEmail === 'string' && brut.studentEmail.trim() ? brut.studentEmail.trim() : null) as string | null
   };
 }

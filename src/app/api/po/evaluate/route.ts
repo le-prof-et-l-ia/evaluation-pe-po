@@ -41,15 +41,15 @@ export async function POST(req: Request) {
               Object.entries(apiKeys).map(([k, v]: [string, any]) => [k, { ...v, keyMode: ocrKeyModeVal }])
             ) : undefined;
 
-            const ocrRes = await extractText(fileUri, mimeType, level || 'B2', ocrModel || 'gemini-3.8-flash', ocrApiKeys?.gemini, undefined, nativeLanguage);
+            const ocrRes = await extractText(fileUri, mimeType, level || 'B2', ocrModel || 'gemini-4-hydrogen', ocrApiKeys?.gemini, undefined, nativeLanguage);
             studentTranscription = ocrRes.text;
           }
 
           // 2. Évaluation initiale
-          const modelLabel = getFriendlyModelName(evalModel || 'flash');
+          const modelLabel = getFriendlyModelName(evalModel || 'gemini-4-hydrogen');
           send({ type: 'progress', message: `🧠 Phase 2 : Évaluation initiale (${modelLabel})...` });
 
-          const geminiModel = evalModel || 'flash';
+          const geminiModel = evalModel || 'gemini-4-hydrogen';
           let result: any;
 
           if (isInterpretation) {
@@ -74,7 +74,7 @@ export async function POST(req: Request) {
           } else {
             result = await evaluateProduction(
               subject, { text: studentTranscription }, language || 'FR', temperature || 0.3,
-              geminiModel, level || 'B2', 'flash', apiKeys?.gemini, undefined, false, nativeLanguage, notationType
+              geminiModel, level || 'B2', 'gemini-4-hydrogen', apiKeys?.gemini, undefined, false, nativeLanguage, notationType
             );
           }
 

@@ -26,6 +26,7 @@ import {
   cleanEvalForPrompt,
   safeParseJson,
   getLanguageInstruction,
+  getAudioTranscriptionPrompt,
 } from './promptUtils';
 import { getFriendlyModelName } from '../modelNames';
 
@@ -48,6 +49,7 @@ export interface ExternalSupervisionConfig {
   level: 'B1' | 'B2' | string;
   language: string;
   notationType: 'detailed' | 'delf';
+  nativeLanguage?: string;
 }
 
 export interface ExternalSupervisionReturn {
@@ -601,11 +603,26 @@ export function buildExternalInitialMarkdown(
   const gridPrompt = buildEvalSystemPrompt(config.level, config.language, config.notationType);
   const ids = tasks.map(t => JSON.stringify(t.fileId)).join(', ');
   const criteria = CRITERIA_BY_LEVEL[config.level] || CRITERIA_BY_LEVEL.B2;
+  const needsTranscription = tasks.some(t => !t.transcription || !t.transcription.trim());
+
+  const transcriptionSection = needsTranscription
+    ? `
+## 🎙️ Étape 1 — Transcription préalable de l'enregistrement audio (Accélération GPU locale prioritaire)
+Pour toute copie dont la transcription n'est pas fournie ci-dessous, tu dois **d'abord transcrire fidèlement le fichier audio joint** par l'utilisateur avant de procéder à l'évaluation, puis placer cette transcription intégrale dans le champ \`"transcription"\` de l'objet \`"evaluation"\`.
+
+⚡ **PRIORITÉ À L'ACCÉLÉRATION MATÉRIELLE (CARTE GRAPHIQUE / GPU LOCAL)** :
+- Si tu disposes d'un accès aux outils locaux de l'ordinateur (agent local, Claude Desktop avec MCP, terminal, Python), **privilégie impérativement une transcription locale accélérée par la carte graphique (GPU CUDA / TensorRT / Apple Metal, ex. Whisper ou faster-whisper sur GPU)** si l'ordinateur en est équipé, afin que la transcription soit beaucoup plus rapide.
+- Si tu fonctionnes dans une interface web ou sans GPU local accessible, utilise directement ta capacité d'écoute multimodale native sur le fichier audio joint.
+
+### Consignes de transcription audio à respecter scrupuleusement :
+${getAudioTranscriptionPrompt(config.level, config.nativeLanguage)}
+`
+    : '';
 
   const langLabel = config.language === 'VN' ? 'Vietnamien (tiếng Việt)' : config.language === 'FR' ? 'Français' : config.language;
-  const header = `# Évaluation initiale externe DELF ${config.level} Production Orale
+  const header = `# Évaluation initiale externe DELF ${config.level} Production Orale${needsTranscription ? ' (Transcription Audio + Évaluation en une seule passe)' : ''}
 
-Tu joues le rôle de l'EXAMINATEUR INITIAL d'une épreuve de PRODUCTION ORALE. Tu dois évaluer **chacune des ${tasks.length} copie(s)** listée(s) plus bas en appliquant la GRILLE ET RÈGLES DE NOTATION (section suivante).
+Tu joues le rôle de l'EXAMINATEUR INITIAL d'une épreuve de PRODUCTION ORALE. Tu dois ${needsTranscription ? '**transcrire** (si la transcription n\'est pas déjà fournie) puis **évaluer**' : 'évaluer'} **chacune des ${tasks.length} copie(s)** listée(s) plus bas en appliquant la GRILLE ET RÈGLES DE NOTATION (section suivante).
 
 ⚠️ LANGUE OBLIGATOIRE DU RAPPORT : ${langLabel}
 Tu DOIS impérativement rédiger l'ensemble des justifications, conseils, règles d'erreurs (errorsTable.rule) et brouillons en ${langLabel}. Seules la transcription corrigée ('transcriptionCorrigee') et les citations directes de l'élève restent en français. Il est STRICTEMENT INTERDIT de rédiger les commentaires en français si la langue demandée est le vietnamien.
@@ -621,13 +638,17 @@ Réponds **uniquement** par un unique tableau JSON valide, sans texte autour :
 
 - Un objet par copie, avec le \`fileId\` recopié à l'identique (valeurs attendues : ${ids}).
 - Le champ \`evaluation\` doit respecter le schéma JSON : \`studentEmail\`, \`studentName\`, \`transcription\`, \`transcriptionCorrigee\`, \`brouillon_phase1_audit\`, \`brouillon_phase2_analyse\`, \`globalScore\`, \`criteriaScores\` { ${criteria.join(', ')} }, \`justifications\` { ${criteria.join(', ')} }, \`advices\` { ${criteria.join(', ')} }, \`errorsTable\` [ { original, correction, rule } ].
-
-## Grille et règles de notation
+${transcriptionSection}
+## ${needsTranscription ? '⚖️ Étape 2 — ' : ''}Grille et règles de notation
 ${gridPrompt}
 `;
 
   const blocks = tasks.map((task, i) => {
-    const userPrompt = buildEvalUserPrompt(task.subject, task.transcription, config.language);
+    const hasTranscription = Boolean(task.transcription && task.transcription.trim());
+    const effectiveTranscription = hasTranscription
+      ? task.transcription
+      : "[À TRANSCRIRE DEPUIS LE FICHIER AUDIO JOINT — Transcris d'abord l'enregistrement audio en suivant les consignes de l'Étape 1 (en utilisant en priorité le GPU de l'ordinateur s'il en est équipé, sinon ton écoute multimodale), place la transcription exacte dans le champ \"transcription\" du JSON, puis évalue cette transcription selon la grille ci-dessus.]";
+    const userPrompt = buildEvalUserPrompt(task.subject, effectiveTranscription, config.language);
     return `---
 
 ## Copie ${i + 1} — fileId : \`${task.fileId}\`
@@ -666,6 +687,6 @@ export function finalizeExternalInitial(
   }
   const cleaned = sanitizeHallucinations(rawEval as CorrectionResult, opts.language);
   const result = sanitizeScores(cleaned, opts.level, opts.notationType);
-  result.transcription = transcription || result.transcription || '';
+  result.transcription = (transcription || '').trim() || result.transcription || '';
   return result;
 }

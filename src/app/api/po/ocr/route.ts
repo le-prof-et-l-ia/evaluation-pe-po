@@ -13,7 +13,7 @@ export async function POST(req: Request) {
       fileUri,
       mimeType,
       level || 'B2',
-      ocrModel || 'gemini-3.8-flash',
+      ocrModel || 'gemini-4-hydrogen',
       apiKeys?.gemini,
       undefined,
       nativeLanguage
@@ -27,7 +27,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ 
       text: ocrResult.text.trim(), 
-      modelUsed: ocrResult.modelUsed || ocrModel || 'gemini-3.8-flash', 
+      modelUsed: ocrResult.modelUsed || ocrModel || 'gemini-4-hydrogen', 
       fallbackNotice: ocrResult.fallbackNotice 
     });
   } catch (err: any) {

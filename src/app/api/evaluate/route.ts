@@ -55,7 +55,7 @@ export async function POST(req: Request) {
         fileUri, 
         mimeType, 
         level || 'B2', 
-        ocrModel || 'gemini-3.8-flash', 
+        ocrModel || 'gemini-4-hydrogen', 
         ocrApiKeys?.gemini, 
         undefined, 
         nativeLanguage,
@@ -67,7 +67,7 @@ export async function POST(req: Request) {
       ocrAlerts = ocrResult.ocrAlerts || [];
     }
 
-    const geminiModel = evalModel || 'flash';
+    const geminiModel = evalModel || 'gemini-4-hydrogen';
 
     // ── NOUVEAUX TYPES D'ÉPREUVES PERSONNALISÉES ──────────────────────
     if (examType === 'dictee') {
@@ -161,7 +161,7 @@ export async function POST(req: Request) {
     // ── ÉPREUVES OFFICIELLES DELF B1 / B2 (INCHANGÉES) ───────────────
     const result: any = await evaluateProduction(
       subject, { text: studentTranscription }, language || 'FR', temperature || 0.3,
-      geminiModel, level || 'B2', 'flash', apiKeys?.gemini, undefined, false, gradingMode, nativeLanguage
+      geminiModel, level || 'B2', 'gemini-4-hydrogen', apiKeys?.gemini, undefined, false, gradingMode, nativeLanguage
     );
 
     // Double evaluation if requested
